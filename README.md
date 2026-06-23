@@ -5,13 +5,19 @@ Pi extension that registers `/pi-diff` and opens a browser diff dashboard using 
 ## Install
 
 ```bash
-pi install ./path/to/pi-diff
+pi install npm:@geminixiang/pi-diff
 ```
 
 Or try it once:
 
 ```bash
-pi -e ./path/to/pi-diff
+pi -e npm:@geminixiang/pi-diff
+```
+
+For local development:
+
+```bash
+pi install ./path/to/pi-diff
 ```
 
 ## Use
