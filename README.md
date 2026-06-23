@@ -8,12 +8,6 @@ Pi extension that registers `/pi-diff` and opens a browser diff dashboard using 
 pi install npm:@geminixiang/pi-diff
 ```
 
-Or try it once:
-
-```bash
-pi -e npm:@geminixiang/pi-diff
-```
-
 For local development:
 
 ```bash
