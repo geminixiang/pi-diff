@@ -252,7 +252,8 @@ module.exports = function piDiff(pi) {
 			const url = `http://127.0.0.1:${port}/`;
 			await openBrowser(url);
 			ctx.ui.notify(`diff opened: ${url}`, "info");
-			ctx.ui.setStatus("diff", ctx.ui.theme.fg("accent", "diff 🔗"));
+			const link = `\x1b]8;;${url}\x1b\\open\x1b]8;;\x1b\\`;
+			ctx.ui.setStatus("diff", ctx.ui.theme.fg("accent", `diff ${link}`));
 		},
 	});
 
