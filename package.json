@@ -1,12 +1,18 @@
 {
-  "name": "pi-diff",
-  "version": "0.1.0",
+  "name": "@geminixiang/pi-diff",
+  "version": "0.0.1",
   "private": true,
   "description": "Pi extension: open a GitHub-like git diff viewer in the browser.",
-  "scripts": { "test": "node --check extensions/pi-diff.js && node test.js" },
-  "keywords": ["pi-package"],
+  "scripts": {
+    "test": "node --check extensions/pi-diff.js && node test.js"
+  },
+  "keywords": [
+    "pi-package"
+  ],
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": [
+      "./extensions"
+    ]
   },
   "dependencies": {
     "diff2html": "^3.4.56"
