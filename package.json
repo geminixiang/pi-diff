@@ -21,6 +21,7 @@
   ],
   "files": [
     "extensions/",
+    "assets/",
     "README.md"
   ],
   "scripts": {
