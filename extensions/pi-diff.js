@@ -201,22 +201,6 @@ function scriptJson(value) {
 	return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
-function visibleWidth(str) {
-	return str.replace(/\x1b\[[0-9;]*m/g, "").length;
-}
-
-function truncateToWidth(str, width) {
-	let result = "";
-	let len = 0;
-	for (const char of str) {
-		const charWidth = char.charCodeAt(0) === 0x1b ? 0 : 1;
-		if (len + charWidth > width) break;
-		result += char;
-		len += charWidth;
-	}
-	return result;
-}
-
 async function openBrowser(target) {
 	const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
 	const args = process.platform === "win32" ? ["/c", "start", "", target] : [target];
@@ -268,43 +252,13 @@ module.exports = function piDiff(pi) {
 			const url = `http://127.0.0.1:${port}/`;
 			await openBrowser(url);
 			ctx.ui.notify(`pi-diff opened: ${url}`, "info");
-
-			ctx.ui.setFooter((tui, theme, footerData) => {
-				const unsub = footerData.onBranchChange(() => tui.requestRender());
-				return {
-					dispose: unsub,
-					invalidate() {},
-					render(width) {
-						const branch = footerData.getGitBranch();
-						const branchStr = branch ? ` (${branch})` : "";
-
-						let input = 0, output = 0, cost = 0;
-						if (ctx.sessionManager) {
-							for (const e of ctx.sessionManager.getBranch()) {
-								if (e.type === "message" && e.message.role === "assistant" && e.message.usage) {
-									input += e.message.usage.input || 0;
-									output += e.message.usage.output || 0;
-									cost += e.message.usage.cost?.total || 0;
-								}
-							}
-						}
-						const fmt = (n) => n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`;
-
-						const status = theme.fg("accent", "● pi-diff active");
-						const stats = theme.fg("dim", `↑${fmt(input)} ↓${fmt(output)} $${cost.toFixed(3)}`);
-						const meta = theme.fg("dim", `${ctx.model?.id || "no-model"}${branchStr}`);
-						const right = `${stats} ${meta}`;
-						const pad = " ".repeat(Math.max(1, width - visibleWidth(status) - visibleWidth(right)));
-						return [truncateToWidth(status + pad + right, width)];
-					},
-				};
-			});
+			ctx.ui.setStatus("pi-diff", ctx.ui.theme.fg("accent", "● pi-diff active"));
 		},
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		server?.close();
 		server = undefined;
-		ctx.ui.setFooter(undefined);
+		ctx.ui.setStatus("pi-diff", undefined);
 	});
 };
