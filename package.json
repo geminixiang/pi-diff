@@ -19,7 +19,6 @@
     "diff",
     "git"
   ],
-  "main": "extensions/pi-diff.js",
   "files": [
     "extensions/",
     "README.md"
@@ -34,21 +33,5 @@
   },
   "dependencies": {
     "diff2html": "^3.4.56"
-  },
-  "peerDependencies": {
-    "@earendil-works/pi-agent-core": "*",
-    "@earendil-works/pi-ai": "*",
-    "@earendil-works/pi-coding-agent": "*"
-  },
-  "peerDependenciesMeta": {
-    "@earendil-works/pi-agent-core": {
-      "optional": true
-    },
-    "@earendil-works/pi-ai": {
-      "optional": true
-    },
-    "@earendil-works/pi-coding-agent": {
-      "optional": true
-    }
   }
 }
