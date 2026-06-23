@@ -8,7 +8,7 @@
     "extensions": ["./extensions"]
   },
   "dependencies": {
-    "diff2html": "^3.4.52"
+    "diff2html": "^3.4.56"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"

@@ -1,6 +1,6 @@
 # pi-diff
 
-Pi extension that registers `/pi-diff` and opens the current `git diff` in a browser using [diff2html](https://github.com/rtfpessoa/diff2html).
+Pi extension that registers `/pi-diff` and opens a browser diff dashboard using [diff2html](https://github.com/rtfpessoa/diff2html).
 
 ## Install
 
@@ -20,7 +20,7 @@ pi -e ./path/to/pi-diff
 /pi-diff
 ```
 
-Optional args are passed to `git diff`, for example:
+The page shows working tree diff, staged diff, and recent commit diffs. Optional args are passed to the working tree `git diff`, for example:
 
 ```text
 /pi-diff --cached
