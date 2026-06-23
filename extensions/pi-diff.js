@@ -2,10 +2,10 @@ const http = require("node:http");
 const { execFile } = require("node:child_process");
 const { readFileSync } = require("node:fs");
 const { promisify } = require("node:util");
-const Diff2Html = require("diff2html");
 
 const execFileAsync = promisify(execFile);
 const diffCss = readFileSync(require.resolve("diff2html/bundles/css/diff2html.min.css"), "utf8");
+const diffUiJs = readFileSync(require.resolve("diff2html/bundles/js/diff2html-ui-base.min.js"), "utf8");
 
 let server;
 
@@ -21,20 +21,6 @@ async function git(cwd, args) {
 	} catch (error) {
 		throw new Error(error.stderr || error.message);
 	}
-}
-
-function diffHtml(diff) {
-	return diff.trim()
-		? Diff2Html.html(diff, {
-			colorScheme: "dark",
-			diffMaxChanges: 3000,
-			diffMaxLineLength: 2000,
-			diffTooBigMessage: () => "Diff too large to render. Narrow the path or commit range.",
-			drawFileList: true,
-			matching: "none",
-			outputFormat: "side-by-side",
-		})
-		: '<p class="empty">No diff.</p>';
 }
 
 async function commits(cwd) {
@@ -96,22 +82,24 @@ function page({ cwd, currentPath, title, command, diff, commits }) {
 		--border: #30363d;
 		--text: #e6edf3;
 		--dim: #8b949e;
-		--header-h: 52px;
+		--header-h: 42px;
 	}
 	* { box-sizing: border-box; }
 	body { margin: 0; background: var(--bg); color: var(--text); font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 	a { color: inherit; text-decoration: none; }
 
-	header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; height: var(--header-h); padding: 0 16px; background: #010409; border-bottom: 1px solid var(--border); }
-	h1 { margin: 0; font-size: 16px; white-space: nowrap; }
+	header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; height: var(--header-h); padding: 0 12px; background: #010409; border-bottom: 1px solid var(--border); }
+	h1 { margin: 0; font-size: 15px; white-space: nowrap; }
 	.meta { flex: 1 1 auto; min-width: 0; color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.menu-toggle { display: none; flex: 0 0 auto; align-items: center; justify-content: center; width: 34px; height: 34px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; font-size: 16px; }
+	.github-link { display: flex; flex: 0 0 auto; color: var(--dim); }
+	.github-link:hover { color: var(--text); }
+	.menu-toggle { display: none; flex: 0 0 auto; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; font-size: 14px; }
 	.menu-toggle:hover { background: var(--panel-2); }
 
-	.layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; max-width: 1600px; margin: 16px auto; padding: 0 16px; }
+	.layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 12px; width: 100%; margin: 0 0 12px; padding: 0 12px; }
 	.sidebar { position: sticky; top: calc(var(--header-h) + 9px); align-self: start; max-height: calc(100vh - var(--header-h) - 18px); overflow: auto; }
 	.nav, .commits { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 12px; }
-	.nav a, .commit { display: block; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+	.nav a, .commit { display: block; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 	.nav a:last-child, .commit:last-child { border-bottom: 0; }
 	.nav a.active, .commit.active, .nav a:hover, .commit:hover { background: var(--panel-2); }
 	.nav a.active, .commit.active { box-shadow: inset 3px 0 0 var(--brand); }
@@ -122,38 +110,26 @@ function page({ cwd, currentPath, title, command, diff, commits }) {
 
 	.scrim { display: none; position: fixed; inset: var(--header-h) 0 0; z-index: 8; background: rgba(1, 4, 9, .6); }
 
-	.d2h-wrapper { width: 100%; }
-	.d2h-file-list-wrapper { position: sticky; top: calc(var(--header-h) + 9px); z-index: 1; max-height: min(50vh, 420px); overflow: auto; border-color: var(--brand); box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 40%, transparent); }
-	.d2h-file-list-header { position: sticky; top: 0; z-index: 1; padding: 10px 12px; cursor: pointer; user-select: none; background: var(--panel); }
-	.d2h-file-list-header::before { content: "▾"; display: inline-block; margin-right: 6px; color: var(--dim); transition: transform .15s ease; }
-	.d2h-file-list-wrapper.collapsed { max-height: none; overflow: visible; }
-	.d2h-file-list-wrapper.collapsed .d2h-file-list-header::before { transform: rotate(-90deg); }
-	.d2h-file-list-wrapper.collapsed .d2h-file-list { display: none; }
-	/* The library's hide/show links are redundant now the header is the toggle. */
-	.d2h-file-switch { display: none; }
-	.d2h-file-wrapper { border-color: var(--border); border-radius: 8px; overflow: hidden; scroll-margin-top: calc(var(--header-h) + 56px); }
-	.d2h-file-header { align-items: center; box-sizing: border-box; height: auto; min-height: 44px; background: linear-gradient(90deg, color-mix(in srgb, var(--brand) 22%, var(--panel)), var(--panel)); border-bottom-color: var(--border); }
-	.d2h-file-header .d2h-file-name-wrapper { flex: 1 1 auto; min-width: 0; width: auto; }
-	.d2h-file-header .d2h-file-name { min-width: 0; }
-	.d2h-file-collapse { display: flex; flex: 0 0 auto; margin-left: 12px; color: #c9d1d9; font-size: 12px; line-height: 1; }
-	.d2h-file-wrapper.collapsed .d2h-files-diff { display: none; }
-	.d2h-file-wrapper.collapsed .d2h-file-header { opacity: .75; }
+	.d2h-file-list-wrapper { position: sticky; top: var(--header-h); z-index: 1; max-height: min(50vh, 420px); overflow: auto; border-color: var(--brand); box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 40%, transparent); cursor: pointer; }
+	.d2h-file-list { cursor: default; }
+	.d2h-file-list-header { padding: 8px 10px; }
+	.d2h-file-header { background: linear-gradient(90deg, color-mix(in srgb, var(--brand) 22%, var(--panel)), var(--panel)); }
+	.d2h-file-header.d2h-sticky-header { top: calc(var(--header-h) + var(--file-list-h, 0px)); }
 	.empty { padding: 40px; text-align: center; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; color: var(--dim); }
 
 	/* Narrow screens: collapse side-by-side panes into a stacked column so each
 	   pane gets the full width, and turn the sidebar into an off-canvas drawer. */
 	@media (max-width: 900px) {
 		.menu-toggle { display: flex; }
-		.layout { grid-template-columns: minmax(0, 1fr); gap: 0; margin: 12px auto; padding: 0 10px; }
+		.layout { grid-template-columns: minmax(0, 1fr); gap: 0; margin: 0 0 8px; padding: 0; }
 		.sidebar {
 			position: fixed; top: var(--header-h); left: 0; z-index: 9;
 			width: min(85vw, 320px); max-height: none; height: calc(100vh - var(--header-h));
-			padding: 12px; background: var(--bg); border-right: 1px solid var(--border);
+			padding: 8px; background: var(--bg); border-right: 1px solid var(--border);
 			transform: translateX(-100%); transition: transform .2s ease;
 		}
 		body.menu-open .sidebar { transform: translateX(0); }
 		body.menu-open .scrim { display: block; }
-		.d2h-file-list-wrapper, .d2h-file-wrapper { border-radius: 6px; }
 	}
 </style>
 </head>
@@ -162,6 +138,9 @@ function page({ cwd, currentPath, title, command, diff, commits }) {
 	<button class="menu-toggle" type="button" aria-label="Toggle commits">☰</button>
 	<h1>pi-diff</h1>
 	<span class="meta">${escapeHtml(cwd)} · ${escapeHtml(command)}</span>
+	<a class="github-link" href="https://github.com/geminixiang/pi-diff" target="_blank" rel="noreferrer" aria-label="GitHub repository">
+		<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.65 7.65 0 0 1 8 3.87c.68 0 1.36.09 2 .26 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
+	</a>
 </header>
 <div class="scrim"></div>
 <main class="layout">
@@ -172,8 +151,9 @@ function page({ cwd, currentPath, title, command, diff, commits }) {
 		</nav>
 		<section class="commits">${list || '<div class="commit">No commits</div>'}</section>
 	</aside>
-	<section class="content"><h2>${escapeHtml(title)}</h2>${diffHtml(diff)}</section>
+	<section class="content"><div id="diff">${diff.trim() ? "" : '<p class="empty">No diff.</p>'}</div></section>
 </main>
+<script src="/diff2html-ui.js"></script>
 <script>
 	(() => {
 		const toggle = document.querySelector(".menu-toggle");
@@ -187,24 +167,27 @@ function page({ cwd, currentPath, title, command, diff, commits }) {
 		addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
 	})();
 
-	document.querySelectorAll(".d2h-file-wrapper").forEach((file) => {
-		const viewed = file.querySelector(".d2h-file-collapse-input");
-		if (!viewed) return;
-		viewed.addEventListener("change", () => {
-			file.classList.toggle("collapsed", viewed.checked);
-			viewed.closest(".d2h-file-collapse")?.classList.toggle("d2h-selected", viewed.checked);
-		});
-	});
-
-	document.querySelectorAll(".d2h-file-list-wrapper").forEach((list) => {
-		const header = list.querySelector(".d2h-file-list-header");
-		const set = (collapsed) => list.classList.toggle("collapsed", collapsed);
-		// Header is the toggle; start collapsed so a long file list never covers the diff.
-		header?.addEventListener("click", () => set(!list.classList.contains("collapsed")));
-		// Jumping to a file shouldn't leave the (re-covering) list open.
-		list.querySelectorAll(".d2h-file-name").forEach((link) => link.addEventListener("click", () => set(true)));
-		set(true);
-	});
+	const diff = ${scriptJson(diff)};
+	if (diff.trim()) {
+		new Diff2HtmlUI(document.getElementById("diff"), diff, {
+			colorScheme: "dark",
+			diffMaxChanges: 3000,
+			diffMaxLineLength: 2000,
+			diffTooBigMessage: () => "Diff too large to render. Narrow the path or commit range.",
+			highlight: false,
+			matching: "none",
+			outputFormat: matchMedia("(max-width: 900px)").matches ? "line-by-line" : "side-by-side",
+		}).draw();
+		const fileList = document.querySelector(".d2h-file-list-wrapper");
+		if (fileList) {
+			new ResizeObserver(([entry]) => document.documentElement.style.setProperty("--file-list-h", (entry.borderBoxSize?.[0]?.blockSize || fileList.offsetHeight) + "px")).observe(fileList);
+			fileList.addEventListener("click", (event) => {
+				if (event.target.closest(".d2h-file-list, .d2h-file-switch")) return;
+				const show = fileList.querySelector(".d2h-show");
+				fileList.querySelector(show?.style.display === "none" ? ".d2h-hide" : ".d2h-show")?.click();
+			});
+		}
+	}
 </script>
 </body>
 </html>`;
@@ -212,6 +195,10 @@ function page({ cwd, currentPath, title, command, diff, commits }) {
 
 function escapeHtml(value) {
 	return String(value).replace(/[&<>"]/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[char]);
+}
+
+function scriptJson(value) {
+	return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
 async function openBrowser(target) {
@@ -231,6 +218,11 @@ module.exports = function piDiff(pi) {
 				if (req.url === "/diff2html.css") {
 					res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
 					res.end(diffCss);
+					return;
+				}
+				if (req.url === "/diff2html-ui.js") {
+					res.writeHead(200, { "content-type": "application/javascript; charset=utf-8" });
+					res.end(diffUiJs);
 					return;
 				}
 
