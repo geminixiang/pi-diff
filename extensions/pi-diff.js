@@ -208,7 +208,7 @@ async function openBrowser(target) {
 }
 
 module.exports = function piDiff(pi) {
-	pi.registerCommand("pi-diff", {
+	pi.registerCommand("diff", {
 		description: "Open git diff in a GitHub-like browser view",
 		handler: async (args, ctx) => {
 			const diffArgs = shlex(args || "");
@@ -251,14 +251,14 @@ module.exports = function piDiff(pi) {
 			const { port } = server.address();
 			const url = `http://127.0.0.1:${port}/`;
 			await openBrowser(url);
-			ctx.ui.notify(`pi-diff opened: ${url}`, "info");
-			ctx.ui.setStatus("pi-diff", ctx.ui.theme.fg("accent", "● pi-diff active"));
+			ctx.ui.notify(`diff opened: ${url}`, "info");
+			ctx.ui.setStatus("diff", ctx.ui.theme.fg("accent", "diff 🔗"));
 		},
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		server?.close();
 		server = undefined;
-		ctx.ui.setStatus("pi-diff", undefined);
+		ctx.ui.setStatus("diff", undefined);
 	});
 };
