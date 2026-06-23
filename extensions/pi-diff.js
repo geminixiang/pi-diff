@@ -10,9 +10,8 @@ const diffCss = readFileSync(require.resolve("diff2html/bundles/css/diff2html.mi
 let server;
 
 function shlex(input) {
-	return (input.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || []).map((part) =>
-		part.replace(/^['"]|['"]$/g, ""),
-	);
+	if (/[\\"']/.test(input)) throw new Error("Quoted/escaped args are not supported; pass plain git diff args.");
+	return input.trim() ? input.trim().split(/\s+/) : [];
 }
 
 async function git(cwd, args) {
@@ -39,6 +38,12 @@ function diffHtml(diff) {
 }
 
 async function commits(cwd) {
+	try {
+		await git(cwd, ["rev-parse", "--verify", "HEAD"]);
+	} catch {
+		return [];
+	}
+
 	const output = await git(cwd, ["log", "--date=relative", "--pretty=format:%H%x09%h%x09%cr%x09%s", "-n", "50"]);
 	return output.split("\n").filter(Boolean).map((line) => {
 		const [sha, shortSha, when, ...subject] = line.split("\t");
@@ -47,6 +52,13 @@ async function commits(cwd) {
 }
 
 async function view(cwd, pathname, diffArgs) {
+	if (pathname === "/") {
+		return {
+			title: "Working tree",
+			command: `git diff ${diffArgs.join(" ")}`,
+			diff: await git(cwd, ["diff", "--no-ext-diff", "--no-color", ...diffArgs]),
+		};
+	}
 	if (pathname === "/staged") {
 		return { title: "Staged", command: "git diff --cached", diff: await git(cwd, ["diff", "--cached", "--no-ext-diff", "--no-color"]) };
 	}
@@ -58,11 +70,7 @@ async function view(cwd, pathname, diffArgs) {
 		return { title, command: `git show ${commit}`, diff: await git(cwd, ["show", "--format=", "--no-ext-diff", "--no-color", commit]) };
 	}
 
-	return {
-		title: "Working tree",
-		command: `git diff ${diffArgs.join(" ")}`,
-		diff: await git(cwd, ["diff", "--no-ext-diff", "--no-color", ...diffArgs]),
-	};
+	throw new Error("Not found");
 }
 
 function page({ cwd, currentPath, title, command, diff, commits }) {
@@ -146,13 +154,6 @@ function page({ cwd, currentPath, title, command, diff, commits }) {
 		body.menu-open .sidebar { transform: translateX(0); }
 		body.menu-open .scrim { display: block; }
 		.d2h-file-list-wrapper, .d2h-file-wrapper { border-radius: 6px; }
-		.d2h-files-diff { flex-direction: column; }
-		.d2h-file-side-diff { width: 100%; }
-		.d2h-file-side-diff + .d2h-file-side-diff { border-top: 1px solid var(--border); }
-		/* Stacked panes don't need row alignment, so drop the empty placeholder
-		   rows the library inserts to keep both sides the same height — otherwise
-		   each pane ends with a tall meaningless blank gap. */
-		.d2h-diff-tbody tr:has(.d2h-emptyplaceholder) { display: none; }
 	}
 </style>
 </head>
@@ -235,11 +236,17 @@ module.exports = function piDiff(pi) {
 
 				try {
 					const pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
+					if (pathname === "/favicon.ico") {
+						res.writeHead(204);
+						res.end();
+						return;
+					}
 					const data = await view(ctx.cwd, pathname, diffArgs);
 					res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
 					res.end(page({ cwd: ctx.cwd, currentPath: pathname, commits: await commits(ctx.cwd), ...data }));
 				} catch (error) {
-					res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+					const notFound = error.message === "Not found";
+					res.writeHead(notFound ? 404 : 500, { "content-type": "text/plain; charset=utf-8" });
 					res.end(error.message);
 				}
 			});

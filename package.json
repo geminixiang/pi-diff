@@ -3,6 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Pi extension: open a GitHub-like git diff viewer in the browser.",
+  "scripts": { "test": "node --check extensions/pi-diff.js && node test.js" },
   "keywords": ["pi-package"],
   "pi": {
     "extensions": ["./extensions"]
