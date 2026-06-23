@@ -277,10 +277,25 @@ module.exports = function piDiff(pi) {
 					render(width) {
 						const branch = footerData.getGitBranch();
 						const branchStr = branch ? ` (${branch})` : "";
-						const left = theme.fg("accent", "● pi-diff active");
-						const right = theme.fg("dim", `${ctx.model?.id || "no-model"}${branchStr}`);
-						const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
-						return [truncateToWidth(left + pad + right, width)];
+
+						let input = 0, output = 0, cost = 0;
+						if (ctx.sessionManager) {
+							for (const e of ctx.sessionManager.getBranch()) {
+								if (e.type === "message" && e.message.role === "assistant" && e.message.usage) {
+									input += e.message.usage.input || 0;
+									output += e.message.usage.output || 0;
+									cost += e.message.usage.cost?.total || 0;
+								}
+							}
+						}
+						const fmt = (n) => n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`;
+
+						const status = theme.fg("accent", "● pi-diff active");
+						const stats = theme.fg("dim", `↑${fmt(input)} ↓${fmt(output)} $${cost.toFixed(3)}`);
+						const meta = theme.fg("dim", `${ctx.model?.id || "no-model"}${branchStr}`);
+						const right = `${stats} ${meta}`;
+						const pad = " ".repeat(Math.max(1, width - visibleWidth(status) - visibleWidth(right)));
+						return [truncateToWidth(status + pad + right, width)];
 					},
 				};
 			});
