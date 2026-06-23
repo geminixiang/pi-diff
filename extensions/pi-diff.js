@@ -252,11 +252,13 @@ module.exports = function piDiff(pi) {
 			const url = `http://127.0.0.1:${port}/`;
 			await openBrowser(url);
 			ctx.ui.notify(`pi-diff opened: ${url}`, "info");
+			ctx.ui.setStatus("pi-diff", ctx.ui.theme.fg("accent", "● pi-diff active"));
 		},
 	});
 
-	pi.on("session_shutdown", () => {
+	pi.on("session_shutdown", (_event, ctx) => {
 		server?.close();
 		server = undefined;
+		ctx.ui.setStatus("pi-diff", undefined);
 	});
 };
