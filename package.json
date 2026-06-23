@@ -1,0 +1,16 @@
+{
+  "name": "pi-diff",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pi extension: open a GitHub-like git diff viewer in the browser.",
+  "keywords": ["pi-package"],
+  "pi": {
+    "extensions": ["./extensions"]
+  },
+  "dependencies": {
+    "diff2html": "^3.4.52"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}
