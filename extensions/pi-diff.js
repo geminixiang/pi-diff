@@ -201,6 +201,22 @@ function scriptJson(value) {
 	return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
+function visibleWidth(str) {
+	return str.replace(/\x1b\[[0-9;]*m/g, "").length;
+}
+
+function truncateToWidth(str, width) {
+	let result = "";
+	let len = 0;
+	for (const char of str) {
+		const charWidth = char.charCodeAt(0) === 0x1b ? 0 : 1;
+		if (len + charWidth > width) break;
+		result += char;
+		len += charWidth;
+	}
+	return result;
+}
+
 async function openBrowser(target) {
 	const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
 	const args = process.platform === "win32" ? ["/c", "start", "", target] : [target];
@@ -252,13 +268,28 @@ module.exports = function piDiff(pi) {
 			const url = `http://127.0.0.1:${port}/`;
 			await openBrowser(url);
 			ctx.ui.notify(`pi-diff opened: ${url}`, "info");
-			ctx.ui.setStatus("pi-diff", ctx.ui.theme.fg("accent", "● pi-diff active"));
+
+			ctx.ui.setFooter((tui, theme, footerData) => {
+				const unsub = footerData.onBranchChange(() => tui.requestRender());
+				return {
+					dispose: unsub,
+					invalidate() {},
+					render(width) {
+						const branch = footerData.getGitBranch();
+						const branchStr = branch ? ` (${branch})` : "";
+						const left = theme.fg("accent", "● pi-diff active");
+						const right = theme.fg("dim", `${ctx.model?.id || "no-model"}${branchStr}`);
+						const pad = " ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)));
+						return [truncateToWidth(left + pad + right, width)];
+					},
+				};
+			});
 		},
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
 		server?.close();
 		server = undefined;
-		ctx.ui.setStatus("pi-diff", undefined);
+		ctx.ui.setFooter(undefined);
 	});
 };
