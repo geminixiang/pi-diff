@@ -2,7 +2,7 @@
 
 Pi extension that registers `/diff` and opens a browser diff dashboard using [diff2html](https://github.com/rtfpessoa/diff2html).
 
-![pi-diff demo](./assets/pi-diff-demo.png)
+![pi-diff demo](https://raw.githubusercontent.com/geminixiang/pi-diff/main/assets/pi-diff-demo.png)
 
 ## Install
 
