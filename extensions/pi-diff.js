@@ -37,6 +37,28 @@ async function commits(cwd) {
 	});
 }
 
+function githubUrl(remote) {
+	const trimmed = remote.trim().replace(/\.git$/, "");
+	const ssh = trimmed.match(/^git@github\.com:(.+)$/);
+	if (ssh) return `https://github.com/${ssh[1]}`;
+	const https = trimmed.match(/^https?:\/\/github\.com\/(.+)$/);
+	if (https) return `https://github.com/${https[1]}`;
+	return null;
+}
+
+async function repoInfo(cwd) {
+	let url = null;
+	let branch = null;
+	try {
+		url = githubUrl(await git(cwd, ["remote", "get-url", "origin"]));
+	} catch {}
+	try {
+		const head = (await git(cwd, ["rev-parse", "--abbrev-ref", "HEAD"])).trim();
+		if (head && head !== "HEAD") branch = head;
+	} catch {}
+	return { url, branch };
+}
+
 function extractFiles(diff) {
 	const files = [];
 	const seen = new Set();
@@ -74,7 +96,7 @@ async function view(cwd, pathname, diffArgs) {
 	throw new Error("Not found");
 }
 
-function page({ cwd, currentPath, title, command, diff, files, commits }) {
+function page({ cwd, currentPath, title, command, diff, files, commits, repo }) {
 	const commitList = commits.map((commit) => {
 		const path = `/commit/${commit.sha}`;
 		const active = currentPath === path ? " active" : "";
@@ -84,6 +106,25 @@ function page({ cwd, currentPath, title, command, diff, files, commits }) {
 	const fileList = files.map((path, index) =>
 		`<button class="file" type="button" data-index="${index}" title="${escapeHtml(path)}"><span class="file-path">&#x2068;${escapeHtml(path)}&#x2069;</span></button>`
 	).join("");
+
+	const icon = {
+		pr: '<svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M1.5 3.25a2.25 2.25 0 1 1 3 2.122v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.25 2.25 0 0 1 1.5 3.25Zm5.677-.177L9.573.677A.25.25 0 0 1 10 .854V2.5h1A2.5 2.5 0 0 1 13.5 5v5.628a2.251 2.251 0 1 1-1.5 0V5a1 1 0 0 0-1-1h-1v1.646a.25.25 0 0 1-.427.177L7.177 3.427a.25.25 0 0 1 0-.354ZM3.75 2.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm0 9.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm8.25.75a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Z"/></svg>',
+		branch: '<svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M9.5 3.25a2.25 2.25 0 1 1 3 2.122V6A2.5 2.5 0 0 1 10 8.5H6a1 1 0 0 0-1 1v1.128a2.251 2.251 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.5 0v1.836A2.493 2.493 0 0 1 6 7h4a1 1 0 0 0 1-1v-.628A2.25 2.25 0 0 1 9.5 3.25Zm-6 0a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0Zm8.25-.75a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM4.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z"/></svg>',
+		github: '<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.65 7.65 0 0 1 8 3.87c.68 0 1.36.09 2 .26 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>',
+	};
+	const links = [];
+	if (repo.url && repo.branch) {
+		const branch = encodeURIComponent(repo.branch);
+		links.push(`<a class="icon-link" href="${repo.url}/compare/${branch}?expand=1" target="_blank" rel="noreferrer" title="在 GitHub 開啟此分支的 PR 建立頁">${icon.pr}</a>`);
+		links.push(`<a class="icon-link" href="${repo.url}/tree/${branch}" target="_blank" rel="noreferrer" title="在 GitHub 檢視此分支 (${escapeHtml(repo.branch)})">${icon.branch}</a>`);
+	}
+	if (repo.url) {
+		links.push(`<a class="icon-link" href="${repo.url}" target="_blank" rel="noreferrer" title="在 GitHub 開啟此 repo">${icon.github}</a>`);
+	}
+	const headerLinks = links.join("");
+	const logo = repo.url
+		? `<a class="logo" href="${repo.url}" target="_blank" rel="noreferrer">pi-diff</a>`
+		: `<span class="logo">pi-diff</span>`;
 
 	return `<!doctype html>
 <html>
@@ -109,10 +150,12 @@ function page({ cwd, currentPath, title, command, diff, files, commits }) {
 	button { font: inherit; color: inherit; cursor: pointer; }
 
 	header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; height: var(--header-h); padding: 0 10px; background: #010409; border-bottom: 1px solid var(--border); }
-	h1 { margin: 0; font-size: 15px; white-space: nowrap; }
+	.logo { margin: 0; font-size: 15px; font-weight: 700; white-space: nowrap; }
+	a.logo:hover { color: var(--brand); }
 	.meta { flex: 1 1 auto; min-width: 0; color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.github-link { display: flex; flex: 0 0 auto; color: var(--dim); }
-	.github-link:hover { color: var(--text); }
+	.icon-links { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
+	.icon-link { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; color: var(--dim); }
+	.icon-link:hover { color: var(--text); background: var(--panel-2); }
 	.menu-toggle { display: none; flex: 0 0 auto; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; background: transparent; color: var(--dim); cursor: pointer; font-size: 18px; }
 	.menu-toggle:hover { color: var(--text); }
 
@@ -170,7 +213,7 @@ function page({ cwd, currentPath, title, command, diff, files, commits }) {
 <body>
 <header>
 	<button class="menu-toggle" type="button" aria-label="Toggle commits">☰</button>
-	<h1>pi-diff</h1>
+	${logo}
 	<span class="meta">${escapeHtml(cwd)} · ${escapeHtml(command)}</span>
 	<div class="toolbar__controls">
 		<div class="segmented-control" role="tablist" aria-label="Diff view mode">
@@ -178,9 +221,7 @@ function page({ cwd, currentPath, title, command, diff, files, commits }) {
 			<button class="view-mode" data-mode="side-by-side" type="button">Split</button>
 		</div>
 	</div>
-	<a class="github-link" href="https://github.com/geminixiang/pi-diff" target="_blank" rel="noreferrer" aria-label="GitHub repository">
-		<svg width="20" height="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82A7.65 7.65 0 0 1 8 3.87c.68 0 1.36.09 2 .26 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
-	</a>
+	<div class="icon-links">${headerLinks}</div>
 </header>
 <div class="scrim"></div>
 <main class="layout">
@@ -331,9 +372,13 @@ module.exports = function piDiff(pi) {
 						res.end();
 						return;
 					}
-					const data = await view(ctx.cwd, pathname, diffArgs);
+					const [data, commitList, repo] = await Promise.all([
+						view(ctx.cwd, pathname, diffArgs),
+						commits(ctx.cwd),
+						repoInfo(ctx.cwd),
+					]);
 					res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-					res.end(page({ cwd: ctx.cwd, currentPath: pathname, commits: await commits(ctx.cwd), ...data }));
+					res.end(page({ cwd: ctx.cwd, currentPath: pathname, commits: commitList, repo, ...data }));
 				} catch (error) {
 					const notFound = error.message === "Not found";
 					res.writeHead(notFound ? 404 : 500, { "content-type": "text/plain; charset=utf-8" });

@@ -13,9 +13,20 @@ vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
 	assert.throws(() => lib.shlex('--output="foo bar.patch"'), /not supported/);
 	assert.throws(() => lib.shlex("foo\\ bar.txt"), /not supported/);
 
-	const html = lib.page({ cwd: ".", currentPath: "/", title: "t", command: "git diff", diff: "</script>", files: ["a.js", "b.js"], commits: [] });
+	assert.equal(lib.githubUrl("git@github.com:owner/repo.git"), "https://github.com/owner/repo");
+	assert.equal(lib.githubUrl("https://github.com/owner/repo.git\n"), "https://github.com/owner/repo");
+	assert.equal(lib.githubUrl("https://gitlab.com/owner/repo.git"), null);
+
+	const html = lib.page({ cwd: ".", currentPath: "/", title: "t", command: "git diff", diff: "</script>", files: ["a.js", "b.js"], commits: [], repo: { url: "https://github.com/owner/repo", branch: "feature/x" } });
 	assert.match(html, /diff2html-ui\.js/);
 	assert.match(html, /new Diff2HtmlUI/);
+	assert.match(html, /compare\/feature%2Fx\?expand=1/);
+	assert.match(html, /tree\/feature%2Fx/);
+	assert.match(html, /class="logo" href="https:\/\/github\.com\/owner\/repo"/);
+
+	const htmlNoRepo = lib.page({ cwd: ".", currentPath: "/", title: "t", command: "git diff", diff: "", files: [], commits: [], repo: { url: null, branch: null } });
+	assert.match(htmlNoRepo, /<span class="logo">pi-diff<\/span>/);
+	assert.doesNotMatch(htmlNoRepo, /<a class="icon-link"/);
 	const extracted = lib.extractFiles("diff --git a/old.txt b/new.txt\ndiff --git a/foo b/foo");
 	assert.equal(extracted.length, 2);
 	assert.equal(extracted[0], "new.txt");
