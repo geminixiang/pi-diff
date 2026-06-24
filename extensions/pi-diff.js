@@ -128,7 +128,7 @@ function page({ cwd, currentPath, title, command, diff, files, commits, repo }) 
 	}).join("");
 
 	const fileList = files.map((path, index) =>
-		`<button class="file" type="button" data-index="${index}" title="${escapeHtml(path)}"><span class="file-path">&#x2068;${escapeHtml(path)}&#x2069;</span></button>`
+		`<div class="file-row"><input class="file-viewed" type="checkbox" data-path="${escapeHtml(path)}" title="Viewed"><button class="file" type="button" data-index="${index}" title="${escapeHtml(path)}"><span class="file-path">&#x2068;${escapeHtml(path)}&#x2069;</span></button></div>`
 	).join("");
 
 	const icon = {
@@ -205,8 +205,10 @@ function page({ cwd, currentPath, title, command, diff, files, commits, repo }) 
 	.section-label { padding: 8px 12px 6px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
 	.files, .commits { border-bottom: 1px solid var(--border); }
 	.commit, .file { display: block; width: 100%; padding: 7px 12px; border: 0; border-left: 2px solid transparent; background: transparent; text-align: left; }
-	.commit:hover, .file:hover { background: var(--panel-2); }
+	.commit:hover, .file-row:hover .file { background: var(--panel-2); }
 	.commit.active, .file.active { background: var(--panel-2); border-left-color: var(--brand); }
+	.file-row { display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: center; }
+	.file-viewed { margin: 0 0 0 10px; accent-color: var(--brand); }
 	.commit { color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.commit span { display: block; color: var(--dim); font-size: 12px; margin-top: 2px; }
 	.file { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
@@ -288,6 +290,25 @@ function page({ cwd, currentPath, title, command, diff, files, commits, repo }) 
 
 	const diff = ${scriptJson(diff)};
 	const files = ${scriptJson(files)};
+	const viewedKey = "pi-diff:viewed:" + ${scriptJson(cwd)} + ":" + ${scriptJson(currentPath)};
+	const chunks = diff.split(/\\n(?=diff --git )/);
+	const hash = (text) => {
+		let value = 0;
+		for (let i = 0; i < text.length; i++) value = ((value << 5) - value + text.charCodeAt(i)) | 0;
+		return String(value);
+	};
+	let viewed = {};
+	try { viewed = JSON.parse(localStorage.getItem(viewedKey) || "{}"); } catch {}
+	viewed = Object.fromEntries(files.filter((path) => viewed[path] === hash(chunks[files.indexOf(path)] || "")).map((path) => [path, viewed[path]]));
+	localStorage.setItem(viewedKey, JSON.stringify(viewed));
+	document.querySelectorAll(".file-viewed").forEach((checkbox) => {
+		const signature = hash(chunks[files.indexOf(checkbox.dataset.path)] || "");
+		checkbox.checked = viewed[checkbox.dataset.path] === signature;
+		checkbox.addEventListener("change", () => {
+			checkbox.checked ? viewed[checkbox.dataset.path] = signature : delete viewed[checkbox.dataset.path];
+			localStorage.setItem(viewedKey, JSON.stringify(viewed));
+		});
+	});
 	if (diff.trim()) {
 		let outputFormat = matchMedia("(max-width: 900px)").matches ? "line-by-line" : "side-by-side";
 		const container = document.getElementById("diff");

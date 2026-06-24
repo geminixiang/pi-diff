@@ -36,9 +36,11 @@ vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
 
 	assert.match(html, /line-by-line.*side-by-side/);
 	assert.match(html, /view-mode/);
-	assert.match(html, /data-index="0"/);
-	assert.match(html, /data-index="1"/);
-	assert.match(html, /\\u003c\/script>/);
+	assert.match(html, /data-path="a\.js"/);
+	assert.doesNotMatch(html, /const chunks = diff\.split\(\/\n/);
+	assert.match(html, /hash\(chunks\[files\.indexOf\(path\)\]/);
+	assert.match(html, /viewed\[checkbox\.dataset\.path\] === signature/);
+	assert.match(html, /localStorage\.setItem\(viewedKey/);
 	assert.doesNotMatch(html, /diff-mobile|diff-desktop|d2h-file-side-diff/);
 
 	const cwd = mkdtempSync(join(tmpdir(), "pi-diff-test-"));
