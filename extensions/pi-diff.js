@@ -9,6 +9,17 @@ const diffCss = readFileSync(require.resolve("diff2html/bundles/css/diff2html.mi
 const diffUiJs = readFileSync(require.resolve("diff2html/bundles/js/diff2html-ui-base.min.js"), "utf8");
 
 let server;
+let reloadTimer;
+const reloadClients = new Set();
+
+function stopServer() {
+	server?.close();
+	server = undefined;
+	clearInterval(reloadTimer);
+	reloadTimer = undefined;
+	for (const res of reloadClients) res.end();
+	reloadClients.clear();
+}
 
 function shlex(input) {
 	if (/[\\"']/.test(input)) throw new Error("Quoted/escaped args are not supported; pass plain git diff args.");
@@ -261,6 +272,8 @@ function page({ cwd, currentPath, title, command, diff, files, commits, repo }) 
 </main>
 <script src="/diff2html-ui.js"></script>
 <script>
+	new EventSource("/events").onmessage = () => location.reload();
+
 	(() => {
 		const toggle = document.querySelector(".menu-toggle");
 		const scrim = document.querySelector(".scrim");
@@ -369,7 +382,22 @@ module.exports = function piDiff(pi) {
 		description: "Open git diff in a GitHub-like browser view",
 		handler: async (args, ctx) => {
 			const diffArgs = shlex(args || "");
-			if (server) server.close();
+			stopServer();
+
+			let lastReloadKey = "";
+			reloadTimer = setInterval(async () => {
+				try {
+					const key = await Promise.all([
+						git(ctx.cwd, ["status", "--porcelain=v1", "--untracked-files=all"]),
+						git(ctx.cwd, ["diff", "--no-ext-diff", "--no-color"]),
+						git(ctx.cwd, ["diff", "--cached", "--no-ext-diff", "--no-color"]),
+					]).then((parts) => parts.join("\0"));
+					if (lastReloadKey && key !== lastReloadKey) {
+						for (const res of reloadClients) res.write("data: reload\n\n");
+					}
+					lastReloadKey = key;
+				} catch {}
+			}, 1000);
 
 			server = http.createServer(async (req, res) => {
 				if (req.url === "/diff2html.css") {
@@ -380,6 +408,16 @@ module.exports = function piDiff(pi) {
 				if (req.url === "/diff2html-ui.js") {
 					res.writeHead(200, { "content-type": "application/javascript; charset=utf-8" });
 					res.end(diffUiJs);
+					return;
+				}
+				if (req.url === "/events") {
+					res.writeHead(200, {
+						"content-type": "text/event-stream; charset=utf-8",
+						"cache-control": "no-cache",
+						connection: "keep-alive",
+					});
+					reloadClients.add(res);
+					req.on("close", () => reloadClients.delete(res));
 					return;
 				}
 
@@ -419,8 +457,7 @@ module.exports = function piDiff(pi) {
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
-		server?.close();
-		server = undefined;
+		stopServer();
 		ctx.ui.setStatus("diff", undefined);
 	});
 };

@@ -26,6 +26,7 @@ vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
 
 	const htmlNoRepo = lib.page({ cwd: ".", currentPath: "/", title: "t", command: "git diff", diff: "", files: [], commits: [], repo: { url: null, branch: null } });
 	assert.match(htmlNoRepo, /<span class="logo">pi-diff<\/span>/);
+	assert.match(htmlNoRepo, /new EventSource\("\/events"\)/);
 	assert.doesNotMatch(htmlNoRepo, /<a class="icon-link"/);
 	const extracted = lib.extractFiles("diff --git a/old.txt b/new.txt\ndiff --git a/foo b/foo");
 	assert.equal(extracted.length, 2);
