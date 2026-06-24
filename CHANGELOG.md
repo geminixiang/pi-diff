@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-06-24
+
+### Added
+
+- Detect the current GitHub repository and branch, and add header links to open the repo, branch tree, and a new pull request.
+- Sidebar now lists changed files and supports switching between unified and split diff views.
+
+### Changed
+
+- Redesign the sidebar with tabs and a flush, no-rounded-corners layout.
+- Remove the search input from the sidebar.
+
 ## [0.0.3] - 2026-06-24
 
 ### Added
