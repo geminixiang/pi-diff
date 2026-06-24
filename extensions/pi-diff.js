@@ -82,7 +82,7 @@ function page({ cwd, currentPath, title, command, diff, files, commits }) {
 	}).join("");
 
 	const fileList = files.map((path, index) =>
-		`<button class="file" type="button" data-index="${index}"><span class="file-path">${escapeHtml(path)}</span></button>`
+		`<button class="file" type="button" data-index="${index}" title="${escapeHtml(path)}"><span class="file-path">&#x2068;${escapeHtml(path)}&#x2069;</span></button>`
 	).join("");
 
 	return `<!doctype html>
@@ -103,37 +103,43 @@ function page({ cwd, currentPath, title, command, diff, files, commits }) {
 		--dim: #8b949e;
 		--header-h: 42px;
 	}
-	* { box-sizing: border-box; }
+	* { box-sizing: border-box; border-radius: 0 !important; }
 	body { margin: 0; background: var(--bg); color: var(--text); font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 	a { color: inherit; text-decoration: none; }
 	button { font: inherit; color: inherit; cursor: pointer; }
 
-	header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; height: var(--header-h); padding: 0 12px; background: #010409; border-bottom: 1px solid var(--border); }
+	header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; height: var(--header-h); padding: 0 10px; background: #010409; border-bottom: 1px solid var(--border); }
 	h1 { margin: 0; font-size: 15px; white-space: nowrap; }
 	.meta { flex: 1 1 auto; min-width: 0; color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.github-link { display: flex; flex: 0 0 auto; color: var(--dim); }
 	.github-link:hover { color: var(--text); }
-	.menu-toggle { display: none; flex: 0 0 auto; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel); color: var(--text); cursor: pointer; font-size: 14px; }
-	.menu-toggle:hover { background: var(--panel-2); }
+	.menu-toggle { display: none; flex: 0 0 auto; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; background: transparent; color: var(--dim); cursor: pointer; font-size: 18px; }
+	.menu-toggle:hover { color: var(--text); }
 
 	.toolbar__controls { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-	.segmented-control { display: flex; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+	.segmented-control { display: flex; background: var(--panel); border: 1px solid var(--border); overflow: hidden; }
 	.segmented-control button { padding: 5px 10px; border: 0; background: transparent; color: var(--dim); font-size: 12px; }
 	.segmented-control button.is-active { background: var(--brand); color: #fff; }
 	.segmented-control button:hover:not(.is-active) { background: var(--panel-2); color: var(--text); }
 
-	.layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 12px; width: 100%; margin: 0 0 12px; padding: 0 12px; }
-	.sidebar { position: sticky; top: calc(var(--header-h) + 9px); align-self: start; max-height: calc(100vh - var(--header-h) - 18px); overflow: auto; }
-	.nav, .commits, .files { background: var(--panel); border: 1px solid var(--border); border-radius: 6px; margin-bottom: 12px; }
-	.nav a, .commit, .file { display: block; width: 100%; padding: 8px 10px; border: 0; border-bottom: 1px solid var(--border); background: transparent; text-align: left; }
-	.nav a:last-child, .commit:last-child, .file:last-child { border-bottom: 0; }
-	.nav a.active, .commit.active, .nav a:hover, .commit:hover, .file:hover { background: var(--panel-2); }
-	.nav a.active, .commit.active { box-shadow: inset 3px 0 0 var(--brand); }
+	.layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); width: 100%; margin: 0; }
+	.sidebar { position: sticky; top: var(--header-h); align-self: start; max-height: calc(100vh - var(--header-h)); overflow: auto; border-right: 1px solid var(--border); background: var(--panel); }
+
+	.tabs { display: flex; position: sticky; top: 0; z-index: 1; border-bottom: 1px solid var(--border); background: var(--panel); }
+	.tabs a { flex: 1 1 0; padding: 9px 8px; text-align: center; font-size: 12px; font-weight: 600; color: var(--dim); border-bottom: 2px solid transparent; }
+	.tabs a:hover { color: var(--text); background: var(--panel-2); }
+	.tabs a.active { color: var(--text); border-bottom-color: var(--brand); }
+
+	.section-label { padding: 8px 12px 6px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
+	.files, .commits { border-bottom: 1px solid var(--border); }
+	.commit, .file { display: block; width: 100%; padding: 7px 12px; border: 0; border-left: 2px solid transparent; background: transparent; text-align: left; }
+	.commit:hover, .file:hover { background: var(--panel-2); }
+	.commit.active, .file.active { background: var(--panel-2); border-left-color: var(--brand); }
 	.commit { color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.commit span { display: block; color: var(--dim); font-size: 12px; margin-top: 2px; }
 	.file { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
-	.file-path { display: block; overflow: hidden; text-overflow: ellipsis; }
-	.files__empty { padding: 12px; color: var(--dim); font-size: 12px; text-align: center; }
+	.file-path { display: block; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
+	.files__empty { padding: 8px 12px 12px; color: var(--dim); font-size: 12px; }
 	.content { min-width: 0; }
 	.content h2 { margin: 0 0 12px; font-size: 16px; font-weight: 600; word-break: break-word; }
 
@@ -144,15 +150,15 @@ function page({ cwd, currentPath, title, command, diff, files, commits }) {
 	.d2h-file-list-header { padding: 8px 10px; }
 	.d2h-file-header { background: linear-gradient(90deg, color-mix(in srgb, var(--brand) 22%, var(--panel)), var(--panel)); }
 	.d2h-file-header.d2h-sticky-header { top: calc(var(--header-h) + var(--file-list-h, 0px)); }
-	.empty { padding: 40px; text-align: center; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; color: var(--dim); }
+	.empty { padding: 40px; text-align: center; color: var(--dim); }
 
 	@media (max-width: 900px) {
 		.menu-toggle { display: flex; }
-		.layout { grid-template-columns: minmax(0, 1fr); gap: 0; margin: 0 0 8px; padding: 0; }
+		.layout { grid-template-columns: minmax(0, 1fr); margin: 0; }
 		.sidebar {
 			position: fixed; top: var(--header-h); left: 0; z-index: 9;
 			width: min(85vw, 320px); max-height: none; height: calc(100vh - var(--header-h));
-			padding: 8px; background: var(--bg); border-right: 1px solid var(--border);
+			border-right: 1px solid var(--border);
 			transform: translateX(-100%); transition: transform .2s ease;
 		}
 		body.menu-open .sidebar { transform: translateX(0); }
@@ -179,14 +185,18 @@ function page({ cwd, currentPath, title, command, diff, files, commits }) {
 <div class="scrim"></div>
 <main class="layout">
 	<aside class="sidebar">
-		<nav class="nav">
+		<nav class="tabs">
 			<a class="${currentPath === "/" ? "active" : ""}" href="/">Working tree</a>
 			<a class="${currentPath === "/staged" ? "active" : ""}" href="/staged">Staged</a>
 		</nav>
 		<section class="files">
+			<div class="section-label">Files${files.length ? ` · ${files.length}` : ""}</div>
 			${fileList || '<div class="files__empty">No files</div>'}
 		</section>
-		<section class="commits">${commitList || '<div class="commit">No commits</div>'}</section>
+		<section class="commits">
+			<div class="section-label">Commits</div>
+			${commitList || '<div class="files__empty">No commits</div>'}
+		</section>
 	</aside>
 	<section class="content"><div id="diff">${diff.trim() ? "" : '<p class="empty">No diff.</p>'}</div></section>
 </main>
@@ -215,8 +225,24 @@ function page({ cwd, currentPath, title, command, diff, files, commits }) {
 			modeButtons.forEach((button) => button.classList.toggle("is-active", button.dataset.mode === outputFormat));
 		}
 
+		const fileItems = Array.from(document.querySelectorAll(".file"));
+
+		function setActive(index) {
+			fileItems.forEach((item) => item.classList.toggle("active", item.dataset.index === String(index)));
+		}
+
+		const headerH = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--header-h")) || 42;
+		const observer = new IntersectionObserver((entries) => {
+			const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+			if (visible) setActive(visible.target.id.replace("file-", ""));
+		}, { rootMargin: "-" + headerH + "px 0px -60% 0px" });
+
 		function assignFileAnchors() {
-			document.querySelectorAll(".d2h-file-wrapper").forEach((wrapper, index) => wrapper.id = "file-" + index);
+			observer.disconnect();
+			document.querySelectorAll(".d2h-file-wrapper").forEach((wrapper, index) => {
+				wrapper.id = "file-" + index;
+				observer.observe(wrapper);
+			});
 		}
 
 		function wireFileListCollapse() {
@@ -251,15 +277,14 @@ function page({ cwd, currentPath, title, command, diff, files, commits }) {
 			draw();
 		}));
 
-		draw();
-
-		const fileItems = Array.from(document.querySelectorAll(".file"));
-
 		fileItems.forEach((item) => item.addEventListener("click", () => {
 			const index = item.dataset.index;
 			const target = document.getElementById("file-" + index);
 			if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+			setActive(index);
 		}));
+
+		draw();
 	}
 </script>
 </body>
