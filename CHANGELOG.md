@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-06-24
+
+### Added
+
+- Show the project name in the header using `package.json`, GitHub remote, then folder name fallback.
+- Add a report flag link to the project issues page at the start of the header icon list.
+
 ## [0.0.5] - 2026-06-24
 
 ### Changed
