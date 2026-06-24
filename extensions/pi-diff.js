@@ -132,110 +132,68 @@ function page({ cwd, currentPath, title, command, diff, files, commits, repo }) 
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>pi-diff</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Rubik:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/diff2html.css">
 <style>
 	:root {
-		--canvas: #1f1633;
-		--night: #150f23;
-		--ink-deep: #1f1633;
-		--text: #ffffff;
-		--muted: #bdb8c0;
-		--faint: #3f3849;
-		--lime: #c2ef4e;
-		--pink: #fa7faa;
-		--violet: #6a5fc1;
-		--violet-deep: #422082;
-		--violet-mid: #79628c;
-		--hairline: #362d59;
-		--hairline-cool: #cfcfdb;
-		--header-h: 52px;
-		--font-ui: Rubik, -apple-system, system-ui, Segoe UI, Helvetica, Arial, sans-serif;
-		--font-code: Monaco, Menlo, Ubuntu Mono, monospace;
+		--brand: #7c3aed;
+		--bg: #0d1117;
+		--panel: #161b22;
+		--panel-2: #21262d;
+		--border: #30363d;
+		--text: #e6edf3;
+		--dim: #8b949e;
+		--header-h: 42px;
 	}
-	* { box-sizing: border-box; }
-	body {
-		margin: 0;
-		background-color: var(--canvas);
-		background-image:
-			radial-gradient(circle at 20% 30%, rgba(255,255,255,.06) 0, transparent 1px),
-			radial-gradient(circle at 80% 70%, rgba(255,255,255,.04) 0, transparent 1px),
-			radial-gradient(circle at 50% 80%, rgba(255,255,255,.05) 0, transparent 1px);
-		background-size: 220px 220px, 180px 180px, 260px 260px;
-		color: var(--text);
-		font: 14px/1.5 var(--font-ui);
-	}
+	* { box-sizing: border-box; border-radius: 0 !important; }
+	body { margin: 0; background: var(--bg); color: var(--text); font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
 	a { color: inherit; text-decoration: none; }
 	button { font: inherit; color: inherit; cursor: pointer; }
 
-	header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 12px; height: var(--header-h); padding: 0 16px; background: var(--canvas); border-bottom: 1px solid var(--hairline); }
-	.logo { margin: 0; font: 700 18px/1.1 var(--font-ui); letter-spacing: 0.2px; text-transform: uppercase; white-space: nowrap; }
-	a.logo:hover { color: var(--lime); }
-	.meta { flex: 1 1 auto; min-width: 0; color: var(--muted); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; height: var(--header-h); padding: 0 10px; background: #010409; border-bottom: 1px solid var(--border); }
+	.logo { margin: 0; font-size: 15px; font-weight: 700; white-space: nowrap; }
+	a.logo:hover { color: var(--brand); }
+	.meta { flex: 1 1 auto; min-width: 0; color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.icon-links { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
-	.icon-link { display: flex; align-items: center; justify-content: center; width: 34px; height: 34px; border-radius: 8px; color: var(--muted); }
-	.icon-link:hover { color: var(--text); background: var(--faint); }
-	.menu-toggle { display: none; flex: 0 0 auto; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; font-size: 18px; }
-	.menu-toggle:hover { color: var(--text); background: var(--faint); }
+	.icon-link { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; color: var(--dim); }
+	.icon-link:hover { color: var(--text); background: var(--panel-2); }
+	.menu-toggle { display: none; flex: 0 0 auto; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; background: transparent; color: var(--dim); cursor: pointer; font-size: 18px; }
+	.menu-toggle:hover { color: var(--text); }
 
 	.toolbar__controls { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-	.segmented-control { display: flex; background: var(--faint); border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden; }
-	.segmented-control button { padding: 8px 12px; border: 0; background: transparent; color: var(--muted); font: 700 12px/1.14 var(--font-ui); letter-spacing: 0.2px; text-transform: uppercase; }
-	.segmented-control button.is-active { background: var(--lime); color: var(--ink-deep); }
-	.segmented-control button:hover:not(.is-active) { background: var(--violet-mid); color: var(--text); }
+	.segmented-control { display: flex; background: var(--panel); border: 1px solid var(--border); overflow: hidden; }
+	.segmented-control button { padding: 5px 10px; border: 0; background: transparent; color: var(--dim); font-size: 12px; }
+	.segmented-control button.is-active { background: var(--brand); color: #fff; }
+	.segmented-control button:hover:not(.is-active) { background: var(--panel-2); color: var(--text); }
 
-	.layout { display: grid; grid-template-columns: 300px minmax(0, 1fr); width: 100%; margin: 0; }
-	.sidebar { position: sticky; top: var(--header-h); align-self: start; max-height: calc(100vh - var(--header-h)); overflow: auto; padding: 12px; background: transparent; }
-	.sidebar-inner { display: flex; flex-direction: column; gap: 12px; }
+	.layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); width: 100%; margin: 0; }
+	.sidebar { position: sticky; top: var(--header-h); align-self: start; max-height: calc(100vh - var(--header-h)); overflow: auto; border-right: 1px solid var(--border); background: var(--panel); }
 
-	.tabs { display: flex; gap: 8px; padding: 4px; background: var(--night); border: 1px solid var(--hairline); border-radius: 12px; }
-	.tabs a { flex: 1 1 0; padding: 8px 10px; text-align: center; border-radius: 8px; font: 700 12px/1.14 var(--font-ui); letter-spacing: 0.2px; text-transform: uppercase; color: var(--muted); }
-	.tabs a:hover { color: var(--text); background: var(--faint); }
-	.tabs a.active { background: var(--lime); color: var(--ink-deep); }
+	.tabs { display: flex; position: sticky; top: 0; z-index: 1; border-bottom: 1px solid var(--border); background: var(--panel); }
+	.tabs a { flex: 1 1 0; padding: 9px 8px; text-align: center; font-size: 12px; font-weight: 600; color: var(--dim); border-bottom: 2px solid transparent; }
+	.tabs a:hover { color: var(--text); background: var(--panel-2); }
+	.tabs a.active { color: var(--text); border-bottom-color: var(--brand); }
 
-	.panel { background: var(--night); border: 1px solid var(--hairline); border-radius: 12px; overflow: hidden; }
-	.section-label { padding: 12px 14px 8px; font: 700 12px/1.14 var(--font-ui); letter-spacing: 0.2px; text-transform: uppercase; color: var(--muted); }
-	.files, .commits { border-top: 1px solid var(--hairline); }
-	.commit, .file { display: block; width: 100%; padding: 9px 14px; border: 0; border-left: 3px solid transparent; background: transparent; text-align: left; color: var(--text); }
-	.commit:hover, .file:hover { background: var(--faint); }
-	.commit.active, .file.active { background: var(--faint); border-left-color: var(--lime); }
-	.commit { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.commit b { color: var(--lime); }
-	.commit span { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
-	.file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+	.section-label { padding: 8px 12px 6px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
+	.files, .commits { border-bottom: 1px solid var(--border); }
+	.commit, .file { display: block; width: 100%; padding: 7px 12px; border: 0; border-left: 2px solid transparent; background: transparent; text-align: left; }
+	.commit:hover, .file:hover { background: var(--panel-2); }
+	.commit.active, .file.active { background: var(--panel-2); border-left-color: var(--brand); }
+	.commit { color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.commit span { display: block; color: var(--dim); font-size: 12px; margin-top: 2px; }
+	.file { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 	.file-path { display: block; overflow: hidden; text-overflow: ellipsis; direction: rtl; }
-	.files__empty { padding: 8px 14px 14px; color: var(--muted); font-size: 14px; }
-	.content { min-width: 0; padding: 16px; }
+	.files__empty { padding: 8px 12px 12px; color: var(--dim); font-size: 12px; }
+	.content { min-width: 0; }
+	.content h2 { margin: 0 0 12px; font-size: 16px; font-weight: 600; word-break: break-word; }
 
-	.scrim { display: none; position: fixed; inset: var(--header-h) 0 0; z-index: 8; background: rgba(21, 15, 35, .7); }
+	.scrim { display: none; position: fixed; inset: var(--header-h) 0 0; z-index: 8; background: rgba(1, 4, 9, .6); }
 
-	.d2h-file-list-wrapper { position: sticky; top: var(--header-h); z-index: 1; max-height: min(50vh, 420px); overflow: auto; border: 1px solid var(--hairline); border-radius: 12px; background: var(--night); cursor: pointer; }
+	.d2h-file-list-wrapper { position: sticky; top: var(--header-h); z-index: 1; max-height: min(50vh, 420px); overflow: auto; border-color: var(--brand); box-shadow: 0 0 0 1px color-mix(in srgb, var(--brand) 40%, transparent); cursor: pointer; }
 	.d2h-file-list { cursor: default; }
-	.d2h-file-list-header { padding: 10px 14px; font-family: var(--font-ui); }
-	.d2h-file-header { background: linear-gradient(90deg, var(--violet-deep), var(--night)); }
+	.d2h-file-list-header { padding: 8px 10px; }
+	.d2h-file-header { background: linear-gradient(90deg, color-mix(in srgb, var(--brand) 22%, var(--panel)), var(--panel)); }
 	.d2h-file-header.d2h-sticky-header { top: calc(var(--header-h) + var(--file-list-h, 0px)); }
-	.empty { padding: 48px; text-align: center; color: var(--muted); font: 400 16px/2 var(--font-ui); }
-
-	.d2h-wrapper {
-		--d2h-bg-color: var(--night);
-		--d2h-empty-bg-color: var(--night);
-		--d2h-empty-placeholder-bg-color: var(--night);
-		--d2h-selected-color: var(--violet-deep);
-		--d2h-line-border-color: var(--hairline);
-		--d2h-code-line-ht: 20px;
-		--d2h-ins-bg-color: rgba(194, 239, 78, .10);
-		--d2h-ins-border-color: rgba(194, 239, 78, .30);
-		--d2h-ins-highlight-bg-color: rgba(194, 239, 78, .18);
-		--d2h-del-bg-color: rgba(250, 127, 170, .10);
-		--d2h-del-border-color: rgba(250, 127, 170, .30);
-		--d2h-del-highlight-bg-color: rgba(250, 127, 170, .18);
-		font-family: var(--font-code);
-	}
-	.d2h-file-wrapper { border-color: var(--hairline); border-radius: 12px; overflow: hidden; margin-bottom: 16px; }
-	.d2h-file-name { color: var(--text); font-family: var(--font-ui); font-weight: 600; }
-	.d2h-info { background: var(--violet-deep); color: var(--text); }
+	.empty { padding: 40px; text-align: center; color: var(--dim); }
 
 	@media (max-width: 900px) {
 		.menu-toggle { display: flex; }
@@ -243,15 +201,12 @@ function page({ cwd, currentPath, title, command, diff, files, commits, repo }) 
 		.sidebar {
 			position: fixed; top: var(--header-h); left: 0; z-index: 9;
 			width: min(85vw, 320px); max-height: none; height: calc(100vh - var(--header-h));
-			padding: 12px;
-			background: var(--canvas);
-			border-right: 1px solid var(--hairline);
+			border-right: 1px solid var(--border);
 			transform: translateX(-100%); transition: transform .2s ease;
 		}
 		body.menu-open .sidebar { transform: translateX(0); }
 		body.menu-open .scrim { display: block; }
 		.toolbar__controls { display: none; }
-		.content { padding: 12px; }
 	}
 </style>
 </head>
@@ -271,20 +226,18 @@ function page({ cwd, currentPath, title, command, diff, files, commits, repo }) 
 <div class="scrim"></div>
 <main class="layout">
 	<aside class="sidebar">
-		<div class="sidebar-inner">
-			<nav class="tabs">
-				<a class="${currentPath === "/" ? "active" : ""}" href="/">Working tree</a>
-				<a class="${currentPath === "/staged" ? "active" : ""}" href="/staged">Staged</a>
-			</nav>
-			<div class="panel">
-				<div class="section-label">Files${files.length ? ` · ${files.length}` : ""}</div>
-				<div class="files">${fileList || '<div class="files__empty">No files</div>'}</div>
-			</div>
-			<div class="panel">
-				<div class="section-label">Commits</div>
-				<div class="commits">${commitList || '<div class="files__empty">No commits</div>'}</div>
-			</div>
-		</div>
+		<nav class="tabs">
+			<a class="${currentPath === "/" ? "active" : ""}" href="/">Working tree</a>
+			<a class="${currentPath === "/staged" ? "active" : ""}" href="/staged">Staged</a>
+		</nav>
+		<section class="files">
+			<div class="section-label">Files${files.length ? ` · ${files.length}` : ""}</div>
+			${fileList || '<div class="files__empty">No files</div>'}
+		</section>
+		<section class="commits">
+			<div class="section-label">Commits</div>
+			${commitList || '<div class="files__empty">No commits</div>'}
+		</section>
 	</aside>
 	<section class="content"><div id="diff">${diff.trim() ? "" : '<p class="empty">No diff.</p>'}</div></section>
 </main>
