@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-06-24
+
+### Added
+
+- Persist viewed file checkboxes in the sidebar and clear them when a file's diff changes.
+- Auto-refresh the diff page when working tree or staged changes update.
+
 ## [0.0.6] - 2026-06-24
 
 ### Added
