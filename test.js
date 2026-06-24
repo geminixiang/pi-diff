@@ -13,10 +13,19 @@ vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
 	assert.throws(() => lib.shlex('--output="foo bar.patch"'), /not supported/);
 	assert.throws(() => lib.shlex("foo\\ bar.txt"), /not supported/);
 
-	const html = lib.page({ cwd: ".", currentPath: "/", title: "t", command: "git diff", diff: "</script>", commits: [] });
+	const html = lib.page({ cwd: ".", currentPath: "/", title: "t", command: "git diff", diff: "</script>", files: ["a.js", "b.js"], commits: [] });
 	assert.match(html, /diff2html-ui\.js/);
 	assert.match(html, /new Diff2HtmlUI/);
+	const extracted = lib.extractFiles("diff --git a/old.txt b/new.txt\ndiff --git a/foo b/foo");
+	assert.equal(extracted.length, 2);
+	assert.equal(extracted[0], "new.txt");
+	assert.equal(extracted[1], "foo");
+	assert.equal(lib.extractFiles("not a diff").length, 0);
+
 	assert.match(html, /line-by-line.*side-by-side/);
+	assert.match(html, /view-mode/);
+	assert.match(html, /data-index="0"/);
+	assert.match(html, /data-index="1"/);
 	assert.match(html, /\\u003c\/script>/);
 	assert.doesNotMatch(html, /diff-mobile|diff-desktop|d2h-file-side-diff/);
 
