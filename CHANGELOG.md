@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-06-24
+
+### Changed
+
+- Simplify the footer diff status to a subtle underlined `diff` link.
+
 ## [0.0.4] - 2026-06-24
 
 ### Added
