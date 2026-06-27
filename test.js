@@ -48,6 +48,10 @@ vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
 		execFileSync("git", ["init", "-q"], { cwd });
 		assert.deepEqual(Array.from(await lib.commits(cwd)), []);
 		await assert.rejects(() => lib.view(cwd, "/nope", []), /Not found/);
+		execFileSync("node", ["-e", "require('node:fs').writeFileSync('new.txt', 'hello\\n')"], { cwd });
+		const untracked = await lib.view(cwd, "/", []);
+		assert.match(untracked.diff, /new file mode/);
+		assert.deepEqual(Array.from(untracked.files), ["new.txt"]);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}

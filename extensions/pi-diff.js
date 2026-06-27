@@ -31,8 +31,40 @@ async function git(cwd, args) {
 		const { stdout } = await execFileAsync("git", args, { cwd, maxBuffer: 50 * 1024 * 1024 });
 		return stdout;
 	} catch (error) {
-		throw new Error(error.stderr || error.message);
+		const wrapped = new Error(error.stderr || error.message);
+		wrapped.code = error.code;
+		wrapped.stdout = error.stdout || "";
+		throw wrapped;
 	}
+}
+
+function untrackedPathspecs(diffArgs) {
+	const dash = diffArgs.indexOf("--");
+	if (dash !== -1) return diffArgs.slice(dash + 1);
+	if (diffArgs.some((arg) => arg.startsWith("-"))) return null;
+	return diffArgs;
+}
+
+async function untrackedDiff(cwd, diffArgs) {
+	const pathspecs = untrackedPathspecs(diffArgs);
+	if (!pathspecs) return "";
+	const output = await git(cwd, ["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathspecs]);
+	const files = output.split("\0").filter(Boolean);
+	const diffs = await Promise.all(files.map(async (file) => {
+		try {
+			return await git(cwd, ["diff", "--no-ext-diff", "--no-color", "--no-index", "--", "/dev/null", file]);
+		} catch (error) {
+			if (error.code === 1 && error.stdout) return error.stdout;
+			throw error;
+		}
+	}));
+	return diffs.filter(Boolean).join("\n");
+}
+
+async function workingTreeDiff(cwd, diffArgs) {
+	const diff = await git(cwd, ["diff", "--no-ext-diff", "--no-color", ...diffArgs]);
+	const untracked = await untrackedDiff(cwd, diffArgs);
+	return [diff.trimEnd(), untracked.trimEnd()].filter(Boolean).join("\n");
 }
 
 async function commits(cwd) {
@@ -101,7 +133,7 @@ function extractFiles(diff) {
 
 async function view(cwd, pathname, diffArgs) {
 	if (pathname === "/") {
-		const diff = await git(cwd, ["diff", "--no-ext-diff", "--no-color", ...diffArgs]);
+		const diff = await workingTreeDiff(cwd, diffArgs);
 		return { title: "Working tree", command: `git diff ${diffArgs.join(" ")}`, diff, files: extractFiles(diff) };
 	}
 	if (pathname === "/staged") {
@@ -410,7 +442,7 @@ module.exports = function piDiff(pi) {
 				try {
 					const key = await Promise.all([
 						git(ctx.cwd, ["status", "--porcelain=v1", "--untracked-files=all"]),
-						git(ctx.cwd, ["diff", "--no-ext-diff", "--no-color"]),
+						workingTreeDiff(ctx.cwd, diffArgs),
 						git(ctx.cwd, ["diff", "--cached", "--no-ext-diff", "--no-color"]),
 					]).then((parts) => parts.join("\0"));
 					if (lastReloadKey && key !== lastReloadKey) {
