@@ -24,7 +24,8 @@
     "README.md"
   ],
   "scripts": {
-    "test": "node --check extensions/pi-diff.js && node test.js"
+    "test": "node --check extensions/pi-diff.js && node test.js",
+    "perf": "node perf.js"
   },
   "pi": {
     "extensions": [

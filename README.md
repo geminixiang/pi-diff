@@ -30,3 +30,12 @@ The page shows working tree diff, staged diff, and recent commit diffs. Optional
 ```
 
 The extension starts a local `127.0.0.1` server for the session and closes it on Pi shutdown/reload.
+
+## Development checks
+
+```bash
+npm test
+npm run perf
+```
+
+`npm run perf` creates a temporary Git repo and fails if watcher events are not coalesced or `.gitignore`d writes trigger Git checks.
