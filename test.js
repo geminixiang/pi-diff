@@ -17,7 +17,7 @@ vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
 	assert.equal(lib.githubUrl("https://github.com/owner/repo.git\n"), "https://github.com/owner/repo");
 	assert.equal(lib.githubUrl("https://gitlab.com/owner/repo.git"), null);
 
-	const html = lib.page({ cwd: ".", currentPath: "/", title: "t", command: "git diff", diff: "</script>", files: ["a.js", "b.js"], commits: [], repo: { url: "https://github.com/owner/repo", branch: "feature/x" } });
+	const html = lib.page({ cwd: ".", currentPath: "/", title: "t", command: "git diff", diff: "</script>", files: ["a.js", "b.js"], signatures: { "a.js": "123" }, viewed: { "a.js": "123" }, commits: [], repo: { url: "https://github.com/owner/repo", branch: "feature/x" } });
 	assert.match(html, /diff2html-ui\.js/);
 	assert.match(html, /new Diff2HtmlUI/);
 	assert.match(html, /compare\/feature%2Fx\?expand=1/);
@@ -36,11 +36,13 @@ vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
 
 	assert.match(html, /line-by-line.*side-by-side/);
 	assert.match(html, /view-mode/);
-	assert.match(html, /data-path="a\.js"/);
-	assert.doesNotMatch(html, /const chunks = diff\.split\(\/\n/);
-	assert.match(html, /hash\(chunks\[files\.indexOf\(path\)\]/);
-	assert.match(html, /viewed\[checkbox\.dataset\.path\] === signature/);
-	assert.match(html, /sessionStorage\.setItem\(viewedKey/);
+	assert.doesNotMatch(html, /file-viewed|sidebar-checkbox|file-click/);
+	assert.match(html, /d2h-file-collapse-input/);
+	assert.match(html, /dataset\.signature/);
+	assert.match(html, /fetch\("\/viewed"/);
+	assert.match(html, /keepalive: true/);
+	assert.match(html, /d2h-d-none/);
+	assert.match(html, /setTimeout\(syncDiffViewed, 0\)/);
 	assert.doesNotMatch(html, /diff-mobile|diff-desktop|d2h-file-side-diff/);
 
 	const cwd = mkdtempSync(join(tmpdir(), "pi-diff-test-"));
@@ -52,6 +54,9 @@ vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
 		const untracked = await lib.view(cwd, "/", []);
 		assert.match(untracked.diff, /new file mode/);
 		assert.deepEqual(Array.from(untracked.files), ["new.txt"]);
+		const firstSignature = untracked.signatures["new.txt"];
+		execFileSync("node", ["-e", "require('node:fs').appendFileSync('new.txt', 'changed\\n')"], { cwd });
+		assert.notEqual((await lib.view(cwd, "/", [])).signatures["new.txt"], firstSignature);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}

@@ -131,14 +131,27 @@ function extractFiles(diff) {
 	return files;
 }
 
+function hash(text) {
+	let value = 0;
+	for (let i = 0; i < text.length; i++) value = ((value << 5) - value + text.charCodeAt(i)) | 0;
+	return String(value);
+}
+
+function fileSignatures(diff, files) {
+	const chunks = diff.split(/\n(?=diff --git )/);
+	return Object.fromEntries(files.map((path, index) => [path, hash(chunks[index] || "")]));
+}
+
 async function view(cwd, pathname, diffArgs) {
 	if (pathname === "/") {
 		const diff = await workingTreeDiff(cwd, diffArgs);
-		return { title: "Working tree", command: `git diff ${diffArgs.join(" ")}`, diff, files: extractFiles(diff) };
+		const files = extractFiles(diff);
+		return { title: "Working tree", command: `git diff ${diffArgs.join(" ")}`, diff, files, signatures: fileSignatures(diff, files) };
 	}
 	if (pathname === "/staged") {
 		const diff = await git(cwd, ["diff", "--cached", "--no-ext-diff", "--no-color"]);
-		return { title: "Staged", command: "git diff --cached", diff, files: extractFiles(diff) };
+		const files = extractFiles(diff);
+		return { title: "Staged", command: "git diff --cached", diff, files, signatures: fileSignatures(diff, files) };
 	}
 
 	const match = pathname.match(/^\/commit\/([0-9a-f]{7,40})$/i);
@@ -146,13 +159,14 @@ async function view(cwd, pathname, diffArgs) {
 		const [commit] = match.slice(1);
 		const title = (await git(cwd, ["show", "-s", "--format=%h %s", commit])).trim();
 		const diff = await git(cwd, ["show", "--format=", "--no-ext-diff", "--no-color", commit]);
-		return { title, command: `git show ${commit}`, diff, files: extractFiles(diff) };
+		const files = extractFiles(diff);
+		return { title, command: `git show ${commit}`, diff, files, signatures: fileSignatures(diff, files) };
 	}
 
 	throw new Error("Not found");
 }
 
-function page({ cwd, currentPath, title, command, diff, files, commits, repo }) {
+function page({ cwd, currentPath, title, command, diff, files, signatures = {}, viewed = {}, commits, repo }) {
 	const commitList = commits.map((commit) => {
 		const path = `/commit/${commit.sha}`;
 		const active = currentPath === path ? " active" : "";
@@ -160,7 +174,7 @@ function page({ cwd, currentPath, title, command, diff, files, commits, repo }) 
 	}).join("");
 
 	const fileList = files.map((path, index) =>
-		`<div class="file-row"><input class="file-viewed" type="checkbox" data-path="${escapeHtml(path)}" title="Viewed"><button class="file" type="button" data-index="${index}" title="${escapeHtml(path)}"><span class="file-path">&#x2068;${escapeHtml(path)}&#x2069;</span></button></div>`
+		`<button class="file" type="button" data-index="${index}" title="${escapeHtml(path)}"><span class="file-path">&#x2068;${escapeHtml(path)}&#x2069;</span></button>`
 	).join("");
 
 	const icon = {
@@ -237,10 +251,8 @@ function page({ cwd, currentPath, title, command, diff, files, commits, repo }) 
 	.section-label { padding: 8px 12px 6px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
 	.files, .commits { border-bottom: 1px solid var(--border); }
 	.commit, .file { display: block; width: 100%; padding: 7px 12px; border: 0; border-left: 2px solid transparent; background: transparent; text-align: left; }
-	.commit:hover, .file-row:hover .file { background: var(--panel-2); }
+	.commit:hover, .file:hover { background: var(--panel-2); }
 	.commit.active, .file.active { background: var(--panel-2); border-left-color: var(--brand); }
-	.file-row { display: grid; grid-template-columns: 26px minmax(0, 1fr); align-items: center; }
-	.file-viewed { margin: 0 0 0 10px; accent-color: var(--brand); }
 	.commit { color: #c9d1d9; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.commit span { display: block; color: var(--dim); font-size: 12px; margin-top: 2px; }
 	.file { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
@@ -322,24 +334,33 @@ function page({ cwd, currentPath, title, command, diff, files, commits, repo }) 
 
 	const diff = ${scriptJson(diff)};
 	const files = ${scriptJson(files)};
-	const viewedKey = "pi-diff:viewed:" + ${scriptJson(cwd)} + ":" + ${scriptJson(currentPath)};
-	const chunks = diff.split(/\\n(?=diff --git )/);
-	const hash = (text) => {
-		let value = 0;
-		for (let i = 0; i < text.length; i++) value = ((value << 5) - value + text.charCodeAt(i)) | 0;
-		return String(value);
-	};
-	let viewed = {};
-	try { viewed = JSON.parse(sessionStorage.getItem(viewedKey) || "{}"); } catch {}
-	viewed = Object.fromEntries(files.filter((path) => viewed[path] === hash(chunks[files.indexOf(path)] || "")).map((path) => [path, viewed[path]]));
+	const signatures = ${scriptJson(signatures)};
+	const viewedKey = "pi-diff:viewed:" + ${scriptJson(cwd)} + ":" + location.pathname;
+	let viewed = ${scriptJson(viewed)};
+	try { viewed = { ...viewed, ...JSON.parse(sessionStorage.getItem(viewedKey) || "{}") }; } catch {}
+	viewed = Object.fromEntries(files.filter((path) => viewed[path] === signatures[path]).map((path) => [path, viewed[path]]));
 	sessionStorage.setItem(viewedKey, JSON.stringify(viewed));
-	document.querySelectorAll(".file-viewed").forEach((checkbox) => {
-		const signature = hash(chunks[files.indexOf(checkbox.dataset.path)] || "");
-		checkbox.checked = viewed[checkbox.dataset.path] === signature;
-		checkbox.addEventListener("change", () => {
-			checkbox.checked ? viewed[checkbox.dataset.path] = signature : delete viewed[checkbox.dataset.path];
-			sessionStorage.setItem(viewedKey, JSON.stringify(viewed));
-		});
+	function isViewed(path) {
+		return viewed[path] === signatures[path];
+	}
+	function saveViewed(path, signature, checked) {
+		checked ? viewed[path] = signature : delete viewed[path];
+		sessionStorage.setItem(viewedKey, JSON.stringify(viewed));
+		const body = JSON.stringify({ currentPath: location.pathname, path, signature, checked });
+		fetch("/viewed", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
+	}
+	function setDiffViewed(wrapper, checked) {
+		wrapper.querySelector(".d2h-file-collapse")?.classList.toggle("d2h-selected", checked);
+		wrapper.querySelector(".d2h-file-diff, .d2h-files-diff")?.classList.toggle("d2h-d-none", checked);
+	}
+	function syncDiffViewed() {
+		document.querySelectorAll(".d2h-file-wrapper").forEach((wrapper) => setDiffViewed(wrapper, isViewed(wrapper.dataset.path)));
+	}
+	document.addEventListener("change", (event) => {
+		const checkbox = event.target.closest?.(".d2h-file-collapse-input");
+		if (!checkbox) return;
+		saveViewed(checkbox.dataset.path, checkbox.dataset.signature, checkbox.checked);
+		setTimeout(syncDiffViewed, 0);
 	});
 	if (diff.trim()) {
 		let outputFormat = matchMedia("(max-width: 900px)").matches ? "line-by-line" : "side-by-side";
@@ -365,7 +386,16 @@ function page({ cwd, currentPath, title, command, diff, files, commits, repo }) 
 		function assignFileAnchors() {
 			observer.disconnect();
 			document.querySelectorAll(".d2h-file-wrapper").forEach((wrapper, index) => {
+				const path = files[index];
 				wrapper.id = "file-" + index;
+				wrapper.dataset.path = path;
+				const checkbox = wrapper.querySelector(".d2h-file-collapse-input");
+				if (checkbox) {
+					checkbox.dataset.path = path;
+					checkbox.dataset.signature = signatures[path] || "";
+					checkbox.checked = isViewed(path);
+				}
+				setDiffViewed(wrapper, isViewed(path));
 				observer.observe(wrapper);
 			});
 		}
@@ -424,6 +454,20 @@ function scriptJson(value) {
 	return JSON.stringify(value).replace(/</g, "\\u003c");
 }
 
+function readJson(req) {
+	return new Promise((resolve, reject) => {
+		let body = "";
+		req.on("data", (chunk) => {
+			body += chunk;
+			if (body.length > 10000) reject(new Error("Request too large"));
+		});
+		req.on("end", () => {
+			try { resolve(JSON.parse(body || "{}")); } catch (error) { reject(error); }
+		});
+		req.on("error", reject);
+	});
+}
+
 async function openBrowser(target) {
 	const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
 	const args = process.platform === "win32" ? ["/c", "start", "", target] : [target];
@@ -436,6 +480,7 @@ module.exports = function piDiff(pi) {
 		handler: async (args, ctx) => {
 			const diffArgs = shlex(args || "");
 			stopServer();
+			const viewedState = new Map();
 
 			let lastReloadKey = "";
 			reloadTimer = setInterval(async () => {
@@ -453,17 +498,18 @@ module.exports = function piDiff(pi) {
 			}, 1000);
 
 			server = http.createServer(async (req, res) => {
-				if (req.url === "/diff2html.css") {
+				const pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
+				if (pathname === "/diff2html.css") {
 					res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
 					res.end(diffCss);
 					return;
 				}
-				if (req.url === "/diff2html-ui.js") {
+				if (pathname === "/diff2html-ui.js") {
 					res.writeHead(200, { "content-type": "application/javascript; charset=utf-8" });
 					res.end(diffUiJs);
 					return;
 				}
-				if (req.url === "/events") {
+				if (pathname === "/events") {
 					res.writeHead(200, {
 						"content-type": "text/event-stream; charset=utf-8",
 						"cache-control": "no-cache",
@@ -475,7 +521,16 @@ module.exports = function piDiff(pi) {
 				}
 
 				try {
-					const pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
+					if (pathname === "/viewed" && req.method === "POST") {
+						const { currentPath, path, signature, checked } = await readJson(req);
+						if (typeof currentPath === "string" && typeof path === "string" && typeof signature === "string") {
+							const key = `${currentPath}\0${path}`;
+							checked ? viewedState.set(key, signature) : viewedState.delete(key);
+						}
+						res.writeHead(204);
+						res.end();
+						return;
+					}
 					if (pathname === "/favicon.ico") {
 						res.writeHead(204);
 						res.end();
@@ -486,8 +541,9 @@ module.exports = function piDiff(pi) {
 						commits(ctx.cwd),
 						repoInfo(ctx.cwd),
 					]);
+					const viewed = Object.fromEntries(data.files.filter((path) => viewedState.get(`${pathname}\0${path}`) === data.signatures[path]).map((path) => [path, data.signatures[path]]));
 					res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-					res.end(page({ cwd: ctx.cwd, currentPath: pathname, commits: commitList, repo, ...data }));
+					res.end(page({ cwd: ctx.cwd, currentPath: pathname, commits: commitList, repo, viewed, ...data }));
 				} catch (error) {
 					const notFound = error.message === "Not found";
 					res.writeHead(notFound ? 404 : 500, { "content-type": "text/plain; charset=utf-8" });
