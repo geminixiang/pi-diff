@@ -1,5 +1,6 @@
 const http = require("node:http");
 const { execFile } = require("node:child_process");
+const { createHash } = require("node:crypto");
 const { readFileSync } = require("node:fs");
 const { basename, join } = require("node:path");
 const { promisify } = require("node:util");
@@ -132,9 +133,7 @@ function extractFiles(diff) {
 }
 
 function hash(text) {
-	let value = 0;
-	for (let i = 0; i < text.length; i++) value = ((value << 5) - value + text.charCodeAt(i)) | 0;
-	return String(value);
+	return createHash("sha256").update(text).digest("hex");
 }
 
 function fileSignatures(diff, files) {
@@ -335,17 +334,13 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 	const diff = ${scriptJson(diff)};
 	const files = ${scriptJson(files)};
 	const signatures = ${scriptJson(signatures)};
-	const viewedKey = "pi-diff:viewed:" + ${scriptJson(cwd)} + ":" + location.pathname;
 	let viewed = ${scriptJson(viewed)};
-	try { viewed = { ...viewed, ...JSON.parse(sessionStorage.getItem(viewedKey) || "{}") }; } catch {}
 	viewed = Object.fromEntries(files.filter((path) => viewed[path] === signatures[path]).map((path) => [path, viewed[path]]));
-	sessionStorage.setItem(viewedKey, JSON.stringify(viewed));
 	function isViewed(path) {
 		return viewed[path] === signatures[path];
 	}
 	function saveViewed(path, signature, checked) {
 		checked ? viewed[path] = signature : delete viewed[path];
-		sessionStorage.setItem(viewedKey, JSON.stringify(viewed));
 		const body = JSON.stringify({ currentPath: location.pathname, path, signature, checked });
 		fetch("/viewed", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
 	}
