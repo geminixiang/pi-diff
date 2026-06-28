@@ -33,6 +33,7 @@ vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
 	assert.equal(extracted[0], "new.txt");
 	assert.equal(extracted[1], "foo");
 	assert.equal(lib.extractFiles("not a diff").length, 0);
+	assert.deepEqual(Array.from(lib.statusFiles(" M a.js\0?? new.txt\0R  next.txt\0old.txt\0")), ["a.js", "new.txt", "next.txt"]);
 
 	assert.match(html, /line-by-line.*side-by-side/);
 	assert.match(html, /view-mode/);
@@ -51,11 +52,13 @@ vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
 		assert.deepEqual(Array.from(await lib.commits(cwd)), []);
 		await assert.rejects(() => lib.view(cwd, "/nope", []), /Not found/);
 		execFileSync("node", ["-e", "require('node:fs').writeFileSync('new.txt', 'hello\\n')"], { cwd });
+		const firstKey = await lib.changeKey(cwd);
 		const untracked = await lib.view(cwd, "/", []);
 		assert.match(untracked.diff, /new file mode/);
 		assert.deepEqual(Array.from(untracked.files), ["new.txt"]);
 		const firstSignature = untracked.signatures["new.txt"];
 		execFileSync("node", ["-e", "require('node:fs').appendFileSync('new.txt', 'changed\\n')"], { cwd });
+		assert.notEqual(await lib.changeKey(cwd), firstKey);
 		assert.notEqual((await lib.view(cwd, "/", [])).signatures["new.txt"], firstSignature);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });

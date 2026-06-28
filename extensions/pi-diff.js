@@ -1,7 +1,7 @@
 const http = require("node:http");
 const { execFile } = require("node:child_process");
 const { createHash } = require("node:crypto");
-const { readFileSync } = require("node:fs");
+const { readFileSync, statSync } = require("node:fs");
 const { basename, join } = require("node:path");
 const { promisify } = require("node:util");
 
@@ -66,6 +66,31 @@ async function workingTreeDiff(cwd, diffArgs) {
 	const diff = await git(cwd, ["diff", "--no-ext-diff", "--no-color", ...diffArgs]);
 	const untracked = await untrackedDiff(cwd, diffArgs);
 	return [diff.trimEnd(), untracked.trimEnd()].filter(Boolean).join("\n");
+}
+
+function statusFiles(output) {
+	const records = output.split("\0").filter(Boolean);
+	const files = [];
+	for (let i = 0; i < records.length; i++) {
+		const record = records[i];
+		if (record[2] !== " ") continue;
+		files.push(record.slice(3));
+		if (record[0] === "R" || record[0] === "C") i++;
+	}
+	return files;
+}
+
+async function changeKey(cwd) {
+	const status = await git(cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all"]);
+	const stats = statusFiles(status).map((file) => {
+		try {
+			const stat = statSync(join(cwd, file));
+			return `${file}\0${stat.size}\0${stat.mtimeMs}`;
+		} catch {
+			return `${file}\0missing`;
+		}
+	});
+	return [status, ...stats].join("\0");
 }
 
 async function commits(cwd) {
@@ -480,11 +505,7 @@ module.exports = function piDiff(pi) {
 			let lastReloadKey = "";
 			reloadTimer = setInterval(async () => {
 				try {
-					const key = await Promise.all([
-						git(ctx.cwd, ["status", "--porcelain=v1", "--untracked-files=all"]),
-						workingTreeDiff(ctx.cwd, diffArgs),
-						git(ctx.cwd, ["diff", "--cached", "--no-ext-diff", "--no-color"]),
-					]).then((parts) => parts.join("\0"));
+					const key = await changeKey(ctx.cwd);
 					if (lastReloadKey && key !== lastReloadKey) {
 						for (const res of reloadClients) res.write("data: reload\n\n");
 					}
