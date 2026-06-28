@@ -2,7 +2,7 @@ const assert = require("node:assert/strict");
 const { execFileSync } = require("node:child_process");
 const { readFileSync, mkdtempSync, rmSync } = require("node:fs");
 const { tmpdir } = require("node:os");
-const { join } = require("node:path");
+const { join, resolve } = require("node:path");
 const vm = require("node:vm");
 
 const lib = { require, module: { exports: {} }, process, setTimeout, clearTimeout, setInterval, clearInterval };
@@ -124,5 +124,33 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 		assert.equal(await lib.changeKey(cwd), ignoredKey);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
+	}
+
+	{
+		const root = mkdtempSync(join(tmpdir(), "pi-diff-worktree-test-"));
+		const repo = join(root, "repo");
+		const worktree = join(root, "wt");
+		try {
+			execFileSync("git", ["init", "-q", repo]);
+			execFileSync("git", ["config", "user.name", "Test"], { cwd: repo });
+			execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repo });
+			execFileSync("node", ["-e", "require('node:fs').writeFileSync('tracked.txt', 'hello\\n')"], { cwd: repo });
+			execFileSync("git", ["add", "tracked.txt"], { cwd: repo });
+			execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: repo });
+			execFileSync("git", ["worktree", "add", "-q", "-b", "worktree-test", worktree], { cwd: repo });
+
+			const rawGitDir = execFileSync("git", ["rev-parse", "--git-dir"], { cwd: worktree }).toString().trim();
+			const expectedGitDir = rawGitDir.startsWith("/") ? rawGitDir : resolve(worktree, rawGitDir);
+			assert.equal(await lib.gitDir(worktree), expectedGitDir);
+			assert.equal((await lib.repoInfo(worktree)).branch, "worktree-test");
+
+			execFileSync("node", ["-e", "const fs = require('node:fs'); fs.appendFileSync('tracked.txt', 'changed\\n'); fs.writeFileSync('new.txt', 'new\\n')"], { cwd: worktree });
+			const data = await lib.view(worktree, "/", []);
+			assert.deepEqual(Array.from(data.files), ["tracked.txt", "new.txt"]);
+			assert.match(data.diff, /diff --git a\/tracked\.txt b\/tracked\.txt/);
+			assert.match(data.diff, /new file mode/);
+		} finally {
+			rmSync(root, { recursive: true, force: true });
+		}
 	}
 })();
