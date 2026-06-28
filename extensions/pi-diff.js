@@ -415,7 +415,10 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 		links.push(`<a class="icon-link" href="${repo.url}" target="_blank" rel="noreferrer" title="在 GitHub 開啟此 repo">${icon.github}</a>`);
 	}
 	const headerLinks = links.join("");
-	const projectName = escapeHtml(repo.name || "pi-diff");
+	const rawProjectName = repo.name || "pi-diff";
+	const projectName = escapeHtml(rawProjectName);
+	const pageTitle = escapeHtml(repo.branch ? `${rawProjectName} · ${repo.branch}` : rawProjectName);
+	const branchMeta = repo.branch ? ` · ${escapeHtml(repo.branch)}` : "";
 	const logo = repo.url
 		? `<a class="logo" href="${repo.url}" target="_blank" rel="noreferrer">${projectName}</a>`
 		: `<span class="logo">${projectName}</span>`;
@@ -425,7 +428,7 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>pi-diff</title>
+<title>${pageTitle}</title>
 <link rel="stylesheet" href="/diff2html.css">
 <style>
 	:root {
@@ -508,7 +511,7 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 <header>
 	<button class="menu-toggle" type="button" aria-label="Toggle commits">☰</button>
 	${logo}
-	<span class="meta">${escapeHtml(cwd)} · ${escapeHtml(command)}</span>
+	<span class="meta">${escapeHtml(cwd)}${branchMeta} · ${escapeHtml(command)}</span>
 	<div class="toolbar__controls">
 		<div class="segmented-control" role="tablist" aria-label="Diff view mode">
 			<button class="view-mode" data-mode="line-by-line" type="button">Unified</button>

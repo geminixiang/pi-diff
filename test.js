@@ -24,6 +24,8 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	assert.match(html, /new Diff2HtmlUI/);
 	assert.match(html, /compare\/feature%2Fx\?expand=1/);
 	assert.match(html, /tree\/feature%2Fx/);
+	assert.match(html, /<title>pi-diff · feature\/x<\/title>/);
+	assert.match(html, /<span class="meta">\. · feature\/x · git diff<\/span>/);
 	assert.match(html, /class="logo" href="https:\/\/github\.com\/owner\/repo"/);
 
 	const htmlNoRepo = lib.page({ cwd: ".", currentPath: "/", title: "t", command: "git diff", diff: "", files: [], commits: [], repo: { url: null, branch: null } });
