@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-06-28
+
+### Changed
+
+- Show the current branch in the page title and navigation metadata.
+
+### Tests
+
+- Cover Git worktree repositories in the diff viewer test suite.
+
 ## [0.2.0] - 2026-06-28
 
 ### Added
