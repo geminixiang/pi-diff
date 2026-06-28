@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-06-28
+
+### Added
+
+- Watch working tree and Git metadata changes with `chokidar` so the diff page refreshes only while browser clients are connected.
+
+### Performance
+
+- Reduce idle Git status polling and coalesce bursty file changes before recomputing the diff reload key.
+
+### Tests
+
+- Add `npm run perf` to guard watcher coalescing and ignored-file behavior.
+
 ## [0.1.2] - 2026-06-28
 
 ### Fixed
