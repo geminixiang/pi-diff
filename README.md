@@ -1,5 +1,9 @@
 # @geminixiang/pi-diff
 
+[![npm](https://img.shields.io/npm/v/%40geminixiang%2Fpi-diff)](https://www.npmjs.com/package/@geminixiang/pi-diff)
+[![CI](https://github.com/geminixiang/pi-diff/actions/workflows/ci.yml/badge.svg)](https://github.com/geminixiang/pi-diff/actions/workflows/ci.yml)
+[![license](https://img.shields.io/npm/l/%40geminixiang%2Fpi-diff)](LICENSE)
+
 Pi extension that registers `/diff` and opens a browser diff dashboard using [diff2html](https://github.com/rtfpessoa/diff2html).
 
 ![pi-diff demo](https://raw.githubusercontent.com/geminixiang/pi-diff/main/assets/pi-diff-demo.png)
