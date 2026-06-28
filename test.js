@@ -5,8 +5,10 @@ const { tmpdir } = require("node:os");
 const { join } = require("node:path");
 const vm = require("node:vm");
 
-const lib = { require, module: { exports: {} }, process };
+const lib = { require, module: { exports: {} }, process, setTimeout, clearTimeout, setInterval, clearInterval };
 vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 (async () => {
 	assert.deepEqual(Array.from(lib.shlex(" --stat  README.md ")), ["--stat", "README.md"]);
@@ -35,6 +37,59 @@ vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
 	assert.equal(lib.extractFiles("not a diff").length, 0);
 	assert.deepEqual(Array.from(lib.statusFiles(" M a.js\0?? new.txt\0R  next.txt\0old.txt\0")), ["a.js", "new.txt", "next.txt"]);
 
+	{
+		let calls = 0;
+		const state = lib.createMonitorState({ debounceMs: 5, changeKey: async () => { calls++; return "same"; }, notify: () => {} });
+		state.cwd = ".";
+		state.lastKey = "same";
+		lib.scheduleReloadCheck("first", state);
+		lib.scheduleReloadCheck("second", state);
+		await wait(30);
+		assert.equal(calls, 1);
+		await lib.stopChangeMonitor(state);
+	}
+
+	{
+		let calls = 0;
+		let notifications = 0;
+		let release;
+		const state = lib.createMonitorState({
+			debounceMs: 0,
+			changeKey: async () => {
+				calls++;
+				if (calls === 1) await new Promise((resolve) => { release = resolve; });
+				return "changed";
+			},
+			notify: () => { notifications++; },
+			ignoredRoots: async () => [],
+		});
+		state.cwd = ".";
+		state.lastKey = "initial";
+		lib.scheduleReloadCheck("first", state, 0);
+		await wait(10);
+		lib.scheduleReloadCheck("during-flight", state, 0);
+		release();
+		await wait(30);
+		assert.equal(calls, 2);
+		assert.equal(notifications, 1);
+		await lib.stopChangeMonitor(state);
+	}
+
+	{
+		const closed = [];
+		const state = lib.createMonitorState();
+		state.cwd = ".";
+		state.debounceTimer = setTimeout(() => {}, 1000);
+		state.safetyTimer = setInterval(() => {}, 1000);
+		state.workingWatcher = { close: async () => { closed.push("working"); } };
+		state.gitWatcher = { close: async () => { closed.push("git"); } };
+		await lib.stopChangeMonitor(state);
+		assert.deepEqual(closed.sort(), ["git", "working"]);
+		assert.equal(state.cwd, null);
+		assert.equal(state.workingWatcher, null);
+		assert.equal(state.gitWatcher, null);
+	}
+
 	assert.match(html, /line-by-line.*side-by-side/);
 	assert.match(html, /view-mode/);
 	assert.doesNotMatch(html, /file-viewed|sidebar-checkbox|file-click/);
@@ -49,6 +104,7 @@ vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
 	const cwd = mkdtempSync(join(tmpdir(), "pi-diff-test-"));
 	try {
 		execFileSync("git", ["init", "-q"], { cwd });
+		assert.equal(await lib.gitDir(cwd), join(cwd, ".git"));
 		assert.deepEqual(Array.from(await lib.commits(cwd)), []);
 		await assert.rejects(() => lib.view(cwd, "/nope", []), /Not found/);
 		execFileSync("node", ["-e", "require('node:fs').writeFileSync('new.txt', 'hello\\n')"], { cwd });
@@ -60,6 +116,12 @@ vm.runInNewContext(readFileSync("extensions/pi-diff.js", "utf8"), lib);
 		execFileSync("node", ["-e", "require('node:fs').appendFileSync('new.txt', 'changed\\n')"], { cwd });
 		assert.notEqual(await lib.changeKey(cwd), firstKey);
 		assert.notEqual((await lib.view(cwd, "/", [])).signatures["new.txt"], firstSignature);
+		execFileSync("node", ["-e", "require('node:fs').writeFileSync('.gitignore', 'ignored/\\n'); require('node:fs').mkdirSync('ignored'); require('node:fs').writeFileSync('ignored/cache.txt', 'skip\\n')"], { cwd });
+		const ignored = await lib.ignoredRoots(cwd);
+		assert.deepEqual(Array.from(ignored), [join(cwd, "ignored")]);
+		const ignoredKey = await lib.changeKey(cwd);
+		execFileSync("node", ["-e", "require('node:fs').appendFileSync('ignored/cache.txt', 'still skipped\\n')"], { cwd });
+		assert.equal(await lib.changeKey(cwd), ignoredKey);
 	} finally {
 		rmSync(cwd, { recursive: true, force: true });
 	}

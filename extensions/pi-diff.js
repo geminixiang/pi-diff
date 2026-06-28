@@ -2,22 +2,23 @@ const http = require("node:http");
 const { execFile } = require("node:child_process");
 const { createHash } = require("node:crypto");
 const { readFileSync, statSync } = require("node:fs");
-const { basename, join } = require("node:path");
+const { basename, isAbsolute, join, relative, resolve } = require("node:path");
 const { promisify } = require("node:util");
+const chokidar = require("chokidar");
 
 const execFileAsync = promisify(execFile);
 const diffCss = readFileSync(require.resolve("diff2html/bundles/css/diff2html.min.css"), "utf8");
 const diffUiJs = readFileSync(require.resolve("diff2html/bundles/js/diff2html-ui-base.min.js"), "utf8");
+const RELOAD_DEBOUNCE_MS = 150;
+const RELOAD_SAFETY_POLL_MS = 15000;
 
 let server;
-let reloadTimer;
 const reloadClients = new Set();
 
 function stopServer() {
 	server?.close();
 	server = undefined;
-	clearInterval(reloadTimer);
-	reloadTimer = undefined;
+	void stopChangeMonitor();
 	for (const res of reloadClients) res.end();
 	reloadClients.clear();
 }
@@ -91,6 +92,200 @@ async function changeKey(cwd) {
 		}
 	});
 	return [status, ...stats].join("\0");
+}
+
+async function gitDir(cwd) {
+	const dir = (await git(cwd, ["rev-parse", "--git-dir"])).trim();
+	return isAbsolute(dir) ? resolve(dir) : resolve(cwd, dir);
+}
+
+async function ignoredRoots(cwd) {
+	const output = await git(cwd, ["ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z"]);
+	return Array.from(new Set(output.split("\0")
+		.filter(Boolean)
+		.map((path) => path.replace(/[\\/]+$/, ""))
+		.filter(Boolean)
+		.map((path) => resolve(cwd, path))));
+}
+
+function pathContains(root, path) {
+	const rel = relative(root, path);
+	return rel === "" || (!!rel && !rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function createMonitorState(options = {}) {
+	return {
+		cwd: null,
+		gitDirPath: null,
+		workingWatcher: null,
+		gitWatcher: null,
+		debounceTimer: null,
+		safetyTimer: null,
+		lastKey: null,
+		checking: false,
+		pending: false,
+		ignoredRootCache: [],
+		token: 0,
+		changeKeyFn: options.changeKey || changeKey,
+		gitDirFn: options.gitDir || gitDir,
+		ignoredRootsFn: options.ignoredRoots || ignoredRoots,
+		watchFn: options.watch || chokidar.watch,
+		notifyFn: options.notify || notifyReloadClients,
+		debounceMs: options.debounceMs ?? RELOAD_DEBOUNCE_MS,
+		safetyPollMs: options.safetyPollMs ?? RELOAD_SAFETY_POLL_MS,
+	};
+}
+
+const changeMonitor = createMonitorState();
+
+function notifyReloadClients() {
+	for (const res of reloadClients) res.write("data: reload\n\n");
+}
+
+function absoluteMonitorPath(path, state = changeMonitor) {
+	return isAbsolute(path) ? resolve(path) : resolve(state.cwd || ".", path);
+}
+
+function shouldIgnoreWorkingPath(path, state = changeMonitor) {
+	const absolute = absoluteMonitorPath(path, state);
+	if (!state.cwd) return false;
+	if (pathContains(resolve(state.cwd, ".git"), absolute)) return true;
+	if (state.gitDirPath && pathContains(state.gitDirPath, absolute)) return true;
+	return state.ignoredRootCache.some((root) => pathContains(root, absolute));
+}
+
+function isIgnoreMetadataPath(path, state = changeMonitor) {
+	const absolute = absoluteMonitorPath(path, state);
+	if (basename(absolute) === ".gitignore") return true;
+	return !!state.gitDirPath && (
+		absolute === join(state.gitDirPath, "info", "exclude") ||
+		absolute === join(state.gitDirPath, "config")
+	);
+}
+
+function gitMetadataPaths(gitDirPath) {
+	return [
+		"index",
+		"HEAD",
+		"refs",
+		"packed-refs",
+		"MERGE_HEAD",
+		"CHERRY_PICK_HEAD",
+		"rebase-apply",
+		"rebase-merge",
+		join("info", "exclude"),
+		"config",
+	].map((path) => join(gitDirPath, path));
+}
+
+async function refreshIgnoredRootCache(state = changeMonitor, { rescan = false } = {}) {
+	if (!state.cwd) return;
+	try {
+		state.ignoredRootCache = await state.ignoredRootsFn(state.cwd);
+		state.workingWatcher?.unwatch?.(state.ignoredRootCache);
+		if (rescan) state.workingWatcher?.add?.(state.cwd);
+	} catch {}
+}
+
+function scheduleReloadCheck(reason, state = changeMonitor, delay = state.debounceMs) {
+	if (!state.cwd) return;
+	clearTimeout(state.debounceTimer);
+	state.debounceTimer = setTimeout(() => {
+		state.debounceTimer = null;
+		void runReloadCheck(reason, state);
+	}, delay);
+}
+
+async function runReloadCheck(_reason, state = changeMonitor) {
+	if (!state.cwd) return;
+	if (state.checking) {
+		state.pending = true;
+		return;
+	}
+
+	state.checking = true;
+	try {
+		do {
+			state.pending = false;
+			const cwd = state.cwd;
+			let key;
+			try {
+				key = await state.changeKeyFn(cwd);
+			} catch {
+				continue;
+			}
+			if (!state.cwd || state.cwd !== cwd) continue;
+			if (state.lastKey === null) {
+				state.lastKey = key;
+				continue;
+			}
+			if (key !== state.lastKey) {
+				state.lastKey = key;
+				state.notifyFn();
+				await refreshIgnoredRootCache(state, { rescan: true });
+			}
+		} while (state.pending && state.cwd);
+	} finally {
+		state.checking = false;
+	}
+}
+
+async function startChangeMonitor(cwd, state = changeMonitor) {
+	if (state.cwd === cwd && (state.workingWatcher || state.gitWatcher || state.safetyTimer)) return;
+	await stopChangeMonitor(state);
+	const token = ++state.token;
+	state.cwd = cwd;
+	try {
+		state.lastKey = await state.changeKeyFn(cwd);
+	} catch {
+		state.lastKey = null;
+	}
+	try {
+		state.gitDirPath = await state.gitDirFn(cwd);
+	} catch {
+		state.gitDirPath = resolve(cwd, ".git");
+	}
+	await refreshIgnoredRootCache(state);
+	if (state.token !== token || state.cwd !== cwd) return;
+
+	const watchOptions = { ignoreInitial: true, persistent: true, awaitWriteFinish: { stabilityThreshold: 100, pollInterval: 25 } };
+	state.workingWatcher = state.watchFn(cwd, {
+		...watchOptions,
+		ignored: (path) => shouldIgnoreWorkingPath(path, state),
+	});
+	state.workingWatcher.on?.("all", (event, path) => {
+		if (isIgnoreMetadataPath(path, state)) void refreshIgnoredRootCache(state, { rescan: true });
+		scheduleReloadCheck(`working:${event}`, state);
+	});
+	state.workingWatcher.on?.("error", () => scheduleReloadCheck("working:error", state, 0));
+
+	state.gitWatcher = state.watchFn(gitMetadataPaths(state.gitDirPath), watchOptions);
+	state.gitWatcher.on?.("all", (event, path) => {
+		if (isIgnoreMetadataPath(path, state)) void refreshIgnoredRootCache(state, { rescan: true });
+		scheduleReloadCheck(`git:${event}`, state);
+	});
+	state.gitWatcher.on?.("error", () => scheduleReloadCheck("git:error", state, 0));
+
+	state.safetyTimer = setInterval(() => scheduleReloadCheck("safety-poll", state, 0), state.safetyPollMs);
+	state.safetyTimer.unref?.();
+}
+
+async function stopChangeMonitor(state = changeMonitor) {
+	state.token++;
+	clearTimeout(state.debounceTimer);
+	clearInterval(state.safetyTimer);
+	state.debounceTimer = null;
+	state.safetyTimer = null;
+	state.cwd = null;
+	state.gitDirPath = null;
+	state.lastKey = null;
+	state.pending = false;
+	state.checking = false;
+	state.ignoredRootCache = [];
+	const watchers = [state.workingWatcher, state.gitWatcher].filter(Boolean);
+	state.workingWatcher = null;
+	state.gitWatcher = null;
+	await Promise.all(watchers.map(async (watcher) => watcher.close?.()));
 }
 
 async function commits(cwd) {
@@ -502,17 +697,6 @@ module.exports = function piDiff(pi) {
 			stopServer();
 			const viewedState = new Map();
 
-			let lastReloadKey = "";
-			reloadTimer = setInterval(async () => {
-				try {
-					const key = await changeKey(ctx.cwd);
-					if (lastReloadKey && key !== lastReloadKey) {
-						for (const res of reloadClients) res.write("data: reload\n\n");
-					}
-					lastReloadKey = key;
-				} catch {}
-			}, 1000);
-
 			server = http.createServer(async (req, res) => {
 				const pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
 				if (pathname === "/diff2html.css") {
@@ -531,8 +715,13 @@ module.exports = function piDiff(pi) {
 						"cache-control": "no-cache",
 						connection: "keep-alive",
 					});
+					const shouldStartMonitor = reloadClients.size === 0;
 					reloadClients.add(res);
-					req.on("close", () => reloadClients.delete(res));
+					if (shouldStartMonitor) void startChangeMonitor(ctx.cwd);
+					req.on("close", () => {
+						reloadClients.delete(res);
+						if (reloadClients.size === 0) void stopChangeMonitor();
+					});
 					return;
 				}
 

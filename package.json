@@ -32,6 +32,7 @@
     ]
   },
   "dependencies": {
+    "chokidar": "^4.0.3",
     "diff2html": "^3.4.56"
   }
 }
