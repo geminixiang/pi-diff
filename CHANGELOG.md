@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-06-28
+
+### Fixed
+
+- Persist the diff header Viewed collapse state across refreshes and redraws, and clear it when a file's diff changes.
+
+### Changed
+
+- Update the README heading to the published package name.
+
 ## [0.1.1] - 2026-06-28
 
 ### Fixed

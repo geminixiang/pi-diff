@@ -1,6 +1,6 @@
 {
   "name": "@geminixiang/pi-diff",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Pi extension: open a GitHub-like git diff viewer in the browser.",
   "author": "geminixiang",
   "license": "MIT",
