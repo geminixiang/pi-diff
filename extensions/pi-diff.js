@@ -429,6 +429,7 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${pageTitle}</title>
+<link id="server-icon" rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='7' fill='%2322c55e'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/diff2html.css">
 <style>
 	:root {
@@ -449,6 +450,8 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 	header { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: 10px; height: var(--header-h); padding: 0 10px; background: #010409; border-bottom: 1px solid var(--border); }
 	.logo { margin: 0; font-size: 15px; font-weight: 700; white-space: nowrap; }
 	a.logo:hover { color: var(--brand); }
+	.server-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50% !important; background: #22c55e; }
+	.server-dot.off { background: #ef4444; }
 	.meta { flex: 1 1 auto; min-width: 0; color: var(--dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.icon-links { display: flex; align-items: center; gap: 4px; flex: 0 0 auto; }
 	.icon-link { display: flex; align-items: center; justify-content: center; width: 30px; height: 30px; color: var(--dim); }
@@ -511,6 +514,7 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 <header>
 	<button class="menu-toggle" type="button" aria-label="Toggle commits">☰</button>
 	${logo}
+	<span class="server-dot" title="Diff server connected" aria-label="Diff server connected"></span>
 	<span class="meta">${escapeHtml(cwd)}${branchMeta} · ${escapeHtml(command)}</span>
 	<div class="toolbar__controls">
 		<div class="segmented-control" role="tablist" aria-label="Diff view mode">
@@ -540,7 +544,16 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 </main>
 <script src="/diff2html-ui.js"></script>
 <script>
-	new EventSource("/events").onmessage = () => location.reload();
+	function setServerOnline(online) {
+		document.getElementById("server-icon").href = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="' + (online ? "#22c55e" : "#ef4444") + '"/></svg>');
+		const dot = document.querySelector(".server-dot");
+		dot?.classList.toggle("off", !online);
+		if (dot) dot.title = dot.ariaLabel = online ? "Diff server connected" : "Diff server disconnected";
+	}
+	const events = new EventSource("/events");
+	events.onopen = () => setServerOnline(true);
+	events.onmessage = () => location.reload();
+	events.onerror = () => setServerOnline(false);
 
 	(() => {
 		const toggle = document.querySelector(".menu-toggle");

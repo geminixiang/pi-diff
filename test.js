@@ -30,7 +30,12 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 	const htmlNoRepo = lib.page({ cwd: ".", currentPath: "/", title: "t", command: "git diff", diff: "", files: [], commits: [], repo: { url: null, branch: null } });
 	assert.match(htmlNoRepo, /<span class="logo">pi-diff<\/span>/);
-	assert.match(htmlNoRepo, /new EventSource\("\/events"\)/);
+	assert.match(htmlNoRepo, /<link id="server-icon" rel="icon"/);
+	assert.match(htmlNoRepo, /<span class="server-dot" title="Diff server connected" aria-label="Diff server connected"><\/span>/);
+	assert.match(htmlNoRepo, /const events = new EventSource\("\/events"\)/);
+	assert.match(htmlNoRepo, /events\.onopen = \(\) => setServerOnline\(true\)/);
+	assert.match(htmlNoRepo, /events\.onerror = \(\) => setServerOnline\(false\)/);
+	assert.doesNotMatch(htmlNoRepo, /Restart \/diff/);
 	assert.doesNotMatch(htmlNoRepo, /<a class="icon-link"/);
 	const extracted = lib.extractFiles("diff --git a/old.txt b/new.txt\ndiff --git a/foo b/foo");
 	assert.equal(extracted.length, 2);
