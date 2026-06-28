@@ -330,15 +330,15 @@ function page({ cwd, currentPath, title, command, diff, files, commits, repo }) 
 		return String(value);
 	};
 	let viewed = {};
-	try { viewed = JSON.parse(localStorage.getItem(viewedKey) || "{}"); } catch {}
+	try { viewed = JSON.parse(sessionStorage.getItem(viewedKey) || "{}"); } catch {}
 	viewed = Object.fromEntries(files.filter((path) => viewed[path] === hash(chunks[files.indexOf(path)] || "")).map((path) => [path, viewed[path]]));
-	localStorage.setItem(viewedKey, JSON.stringify(viewed));
+	sessionStorage.setItem(viewedKey, JSON.stringify(viewed));
 	document.querySelectorAll(".file-viewed").forEach((checkbox) => {
 		const signature = hash(chunks[files.indexOf(checkbox.dataset.path)] || "");
 		checkbox.checked = viewed[checkbox.dataset.path] === signature;
 		checkbox.addEventListener("change", () => {
 			checkbox.checked ? viewed[checkbox.dataset.path] = signature : delete viewed[checkbox.dataset.path];
-			localStorage.setItem(viewedKey, JSON.stringify(viewed));
+			sessionStorage.setItem(viewedKey, JSON.stringify(viewed));
 		});
 	});
 	if (diff.trim()) {
