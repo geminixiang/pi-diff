@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-07-22
+
+### Fixed
+
+- Render untracked symbolic links to directories instead of failing with a `Could not access '<path>/null'` error.
+
+### Changed
+
+- Add npm version, license, and CI status badges to the README.
+
+### Tests
+
+- Cover untracked directory symbolic links in the diff viewer test suite.
+
 ## [0.2.2] - 2026-06-28
 
 ### Added
