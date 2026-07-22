@@ -1,7 +1,7 @@
 const http = require("node:http");
 const { execFile } = require("node:child_process");
 const { createHash } = require("node:crypto");
-const { readFileSync, statSync } = require("node:fs");
+const { lstatSync, readFileSync, readlinkSync, statSync } = require("node:fs");
 const { basename, isAbsolute, join, relative, resolve } = require("node:path");
 const { promisify } = require("node:util");
 const chokidar = require("chokidar");
@@ -47,12 +47,28 @@ function untrackedPathspecs(diffArgs) {
 	return diffArgs;
 }
 
+function untrackedSymlinkDiff(cwd, file) {
+	const target = readlinkSync(join(cwd, file));
+	const endsWithNewline = target.endsWith("\n");
+	const lines = (endsWithNewline ? target.slice(0, -1) : target).split("\n");
+	return [
+		`diff --git a/${file} b/${file}`,
+		"new file mode 120000",
+		"--- /dev/null",
+		`+++ b/${file}`,
+		`@@ -0,0 +1,${lines.length} @@`,
+		...lines.map((line) => `+${line}`),
+		...(endsWithNewline ? [] : ["\\ No newline at end of file"]),
+	].join("\n");
+}
+
 async function untrackedDiff(cwd, diffArgs) {
 	const pathspecs = untrackedPathspecs(diffArgs);
 	if (!pathspecs) return "";
 	const output = await git(cwd, ["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathspecs]);
 	const files = output.split("\0").filter(Boolean);
 	const diffs = await Promise.all(files.map(async (file) => {
+		if (lstatSync(join(cwd, file)).isSymbolicLink()) return untrackedSymlinkDiff(cwd, file);
 		try {
 			return await git(cwd, ["diff", "--no-ext-diff", "--no-color", "--no-index", "--", "/dev/null", file]);
 		} catch (error) {

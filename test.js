@@ -134,6 +134,20 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	}
 
 	{
+		const cwd = mkdtempSync(join(tmpdir(), "pi-diff-symlink-test-"));
+		try {
+			execFileSync("git", ["init", "-q"], { cwd });
+			execFileSync("node", ["-e", "const fs = require('node:fs'); fs.mkdirSync('target'); fs.symlinkSync('target', 'link', 'dir')"], { cwd });
+			const data = await lib.view(cwd, "/", []);
+			assert.deepEqual(Array.from(data.files), ["link"]);
+			assert.match(data.diff, /new file mode 120000/);
+			assert.match(data.diff, /\+target/);
+		} finally {
+			rmSync(cwd, { recursive: true, force: true });
+		}
+	}
+
+	{
 		const root = mkdtempSync(join(tmpdir(), "pi-diff-worktree-test-"));
 		const repo = join(root, "repo");
 		const worktree = join(root, "wt");
