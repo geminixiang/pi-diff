@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Make `/diff` open the iterative browser-based review queue for agent changes.
+- Sort the review queue by file modification time and restore a file when its diff changes after review.
+- Add GitHub-style drag-to-highlight old/new-line range comments and submit them to the active Pi agent.
+- Remove the `vs HEAD` tab from the review sidebar to keep the workflow focused.
+- Wrap long diff content without changing diff2html's row and line-number layout.
+
+### Tests
+
+- Cover review queue filtering, feedback formatting, and review page controls.
+
 ## [0.2.3] - 2026-07-22
 
 ### Fixed

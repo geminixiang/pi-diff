@@ -19,10 +19,25 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	assert.equal(lib.githubUrl("https://github.com/owner/repo.git\n"), "https://github.com/owner/repo");
 	assert.equal(lib.githubUrl("https://gitlab.com/owner/repo.git"), null);
 
+	const reviewSource = "diff --git a/old.js b/old.js\n--- a/old.js\n+++ b/old.js\n@@ -1 +1 @@\n-old\n+new\ndiff --git a/new.js b/new.js\n--- a/new.js\n+++ b/new.js\n@@ -0,0 +1 @@\n+new\n";
+	const reviewSignatures = lib.fileSignatures(reviewSource, ["old.js", "new.js"]);
+	const pending = lib.reviewDiff(reviewSource, new Map([["old.js", reviewSignatures["old.js"]]]));
+	assert.doesNotMatch(pending, /a\/old\.js/);
+	assert.match(pending, /a\/new\.js/);
+	assert.equal(lib.formatReviewFeedback([{ path: "new.js", side: "new", line: 1, endLine: 1, body: "Add a test." }]), "Please address the following review comments:\n\nnew.js\n- New line 1: Add a test.");
+	assert.match(lib.formatReviewFeedback([{ path: "new.js", side: "new", line: 2, endLine: 5, body: "Extract this." }]), /New lines 2-5: Extract this\./);
+
 	const html = lib.page({ cwd: ".", currentPath: "/", title: "t", command: "git diff", diff: "</script>", files: ["a.js", "b.js"], signatures: { "a.js": "123" }, viewed: { "a.js": "123" }, commits: [], repo: { url: "https://github.com/owner/repo", branch: "feature/x" } });
 	assert.match(html, /diff2html-ui\.js/);
 	assert.match(html, /new Diff2HtmlUI/);
 	assert.match(html, /compare\/feature%2Fx\?expand=1/);
+	const reviewHtml = lib.page({ cwd: ".", currentPath: "/review", title: "Review queue", command: "git diff", diff: reviewSource, files: ["old.js", "new.js"], signatures: reviewSignatures, commits: [], repo: {}, reviewMode: true });
+	assert.match(reviewHtml, /Submit review/);
+	assert.match(reviewHtml, /\/review\/submit/);
+	assert.doesNotMatch(reviewHtml, />vs HEAD</);
+	assert.match(reviewHtml, /d2h-code-linenumber, \.d2h-code-side-linenumber/);
+	assert.match(reviewHtml, /d2h-file-side-diff/);
+	assert.match(reviewHtml, /selection = null;\s*document\.body\.classList\.remove\("review-selecting"\);\s*openEditor/);
 	assert.match(html, /tree\/feature%2Fx/);
 	assert.match(html, /<title>pi-diff · feature\/x<\/title>/);
 	assert.match(html, /<span class="meta">\. · feature\/x · git diff<\/span>/);
@@ -106,7 +121,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	assert.match(html, /keepalive: true/);
 	assert.match(html, /d2h-d-none/);
 	assert.match(html, /setTimeout\(syncDiffViewed, 0\)/);
-	assert.doesNotMatch(html, /diff-mobile|diff-desktop|d2h-file-side-diff/);
+	assert.doesNotMatch(html, /diff-mobile|diff-desktop/);
 
 	const cwd = mkdtempSync(join(tmpdir(), "pi-diff-test-"));
 	try {

@@ -4,7 +4,7 @@
 [![CI](https://github.com/geminixiang/pi-diff/actions/workflows/ci.yml/badge.svg)](https://github.com/geminixiang/pi-diff/actions/workflows/ci.yml)
 [![license](https://img.shields.io/npm/l/%40geminixiang%2Fpi-diff)](LICENSE)
 
-Pi extension that registers `/diff` and opens a browser diff dashboard using [diff2html](https://github.com/rtfpessoa/diff2html).
+Pi extension that registers `/diff`, opening a browser dashboard using [diff2html](https://github.com/rtfpessoa/diff2html).
 
 ![pi-diff demo](https://raw.githubusercontent.com/geminixiang/pi-diff/main/assets/pi-diff-demo.png)
 
@@ -32,6 +32,14 @@ The page shows working tree diff, staged diff, and recent commit diffs. Optional
 /diff --cached
 /diff HEAD~1
 ```
+
+For an iterative agent review workflow, use:
+
+```text
+/diff
+```
+
+Review mode sorts changed files by modification time. Drag across old or new line numbers to highlight a range and add a GitHub-style multi-line review comment. Choose **Submit review** to send all comments to the current Pi agent. Submitted file versions leave the review queue; if the agent changes them again, they reappear automatically.
 
 The extension starts a local `127.0.0.1` server for the session and closes it on Pi shutdown/reload.
 

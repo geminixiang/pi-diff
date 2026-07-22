@@ -373,15 +373,53 @@ function hash(text) {
 }
 
 function fileSignatures(diff, files) {
-	const chunks = diff.split(/\n(?=diff --git )/);
+	const chunks = diffChunks(diff);
 	return Object.fromEntries(files.map((path, index) => [path, hash(chunks[index] || "")]));
 }
 
-async function view(cwd, pathname, diffArgs) {
-	if (pathname === "/") {
-		const diff = await workingTreeDiff(cwd, diffArgs);
+function diffChunks(diff) {
+	return diff ? diff.split(/\n(?=diff --git )/).filter(Boolean) : [];
+}
+
+function sortDiffByMtime(cwd, diff) {
+	return diffChunks(diff).map((chunk, index) => {
+		const [path] = extractFiles(chunk);
+		let mtime = 0;
+		try { mtime = statSync(join(cwd, path)).mtimeMs; } catch {}
+		return { chunk, path, mtime, index };
+	}).sort((a, b) => b.mtime - a.mtime || a.index - b.index).map(({ chunk }) => chunk).join("\n");
+}
+
+function reviewDiff(diff, reviewed) {
+	return diffChunks(diff).filter((chunk) => {
+		const [path] = extractFiles(chunk);
+		return reviewed.get(path) !== hash(chunk);
+	}).join("\n");
+}
+
+function formatReviewFeedback(comments) {
+	const groups = new Map();
+	for (const comment of comments) {
+		if (!groups.has(comment.path)) groups.set(comment.path, []);
+		groups.get(comment.path).push(comment);
+	}
+	const lines = ["Please address the following review comments:"];
+	for (const [path, items] of groups) {
+		lines.push("", path);
+		for (const item of items) {
+			const range = item.endLine && item.endLine !== item.line ? `lines ${item.line}-${item.endLine}` : `line ${item.line}`;
+			lines.push(`- ${item.side === "old" ? "Old" : "New"} ${range}: ${item.body}`);
+		}
+	}
+	return lines.join("\n");
+}
+
+async function view(cwd, pathname, diffArgs, reviewed = new Map()) {
+	if (pathname === "/" || pathname === "/review") {
+		let diff = await workingTreeDiff(cwd, diffArgs);
+		if (pathname === "/review") diff = reviewDiff(sortDiffByMtime(cwd, diff), reviewed);
 		const files = extractFiles(diff);
-		return { title: "Working tree", command: `git diff ${diffArgs.join(" ")}`, diff, files, signatures: fileSignatures(diff, files) };
+		return { title: pathname === "/review" ? "Review queue" : "Working tree", command: `git diff ${diffArgs.join(" ")}`, diff, files, signatures: fileSignatures(diff, files), reviewMode: pathname === "/review" };
 	}
 	if (pathname === "/staged") {
 		const diff = await git(cwd, ["diff", "--cached", "--no-ext-diff", "--no-color"]);
@@ -401,7 +439,7 @@ async function view(cwd, pathname, diffArgs) {
 	throw new Error("Not found");
 }
 
-function page({ cwd, currentPath, title, command, diff, files, signatures = {}, viewed = {}, commits, repo }) {
+function page({ cwd, currentPath, title, command, diff, files, signatures = {}, viewed = {}, commits, repo, reviewMode = false }) {
 	const commitList = commits.map((commit) => {
 		const path = `/commit/${commit.sha}`;
 		const active = currentPath === path ? " active" : "";
@@ -490,7 +528,8 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 	.tabs a.active { color: var(--text); border-bottom-color: var(--brand); }
 
 	.section-label { padding: 8px 12px 6px; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
-	.files, .commits { border-bottom: 1px solid var(--border); }
+	.files { border-bottom: 1px solid var(--border); }
+	.commits { padding: 30px 0; border-bottom: 1px solid var(--border); }
 	.commit, .file { display: block; width: 100%; padding: 7px 12px; border: 0; border-left: 2px solid transparent; background: transparent; text-align: left; }
 	.commit:hover, .file:hover { background: var(--panel-2); }
 	.commit.active, .file.active { background: var(--panel-2); border-left-color: var(--brand); }
@@ -501,6 +540,7 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 	.files__empty { padding: 8px 12px 12px; color: var(--dim); font-size: 12px; }
 	.content { min-width: 0; }
 	.content h2 { margin: 0 0 12px; font-size: 16px; font-weight: 600; word-break: break-word; }
+	.d2h-code-line-ctn { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 	.scrim { display: none; position: fixed; inset: var(--header-h) 0 0; z-index: 8; background: rgba(1, 4, 9, .6); }
 
@@ -510,6 +550,25 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 	.d2h-file-header { background: linear-gradient(90deg, color-mix(in srgb, var(--brand) 22%, var(--panel)), var(--panel)); }
 	.d2h-file-header.d2h-sticky-header { top: calc(var(--header-h) + var(--file-list-h, 0px)); }
 	.empty { padding: 40px; text-align: center; color: var(--dim); }
+	.review-line { position: relative; }
+	.review-line .d2h-code-linenumber, .review-line .d2h-code-side-linenumber { cursor: crosshair; user-select: none; }
+	.review-line:hover > td { box-shadow: inset 3px 0 var(--brand); }
+	.review-line.review-selected > td { background: color-mix(in srgb, var(--brand) 34%, #161b22) !important; box-shadow: inset 3px 0 #58a6ff; }
+	.review-line.review-commented > td { background: color-mix(in srgb, var(--brand) 18%, #161b22) !important; }
+	body.review-selecting { cursor: ns-resize; user-select: none; }
+	.review-comment-row td { padding: 8px 12px; background: #161b22; border-bottom: 1px solid var(--border); }
+	.review-comment { display: flex; justify-content: space-between; gap: 12px; white-space: pre-wrap; }
+	.review-comment button { color: var(--dim); background: transparent; border: 0; cursor: pointer; }
+	.review-editor { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 12px; align-items: start; }
+	.review-editor-label { grid-row: 1; color: var(--dim); font-size: 12px; white-space: nowrap; padding-top: 9px; }
+	.review-editor textarea { grid-column: 2; width: 100%; min-height: 64px; resize: vertical; color: var(--text); background: #0d1117; border: 1px solid var(--brand); border-radius: 6px; padding: 8px; font: inherit; }
+	.review-editor-actions { grid-column: 2; display: flex; justify-content: flex-start; gap: 8px; }
+	.review-editor button, .review-submit { color: white; background: var(--brand); border: 0; border-radius: 6px; padding: 8px 12px; cursor: pointer; }
+	.review-editor .review-cancel { color: var(--text); background: #30363d; }
+	.review-bar { position: fixed; right: 20px; bottom: 20px; z-index: 20; display: flex; align-items: center; gap: 12px; padding: 10px 12px; color: var(--text); background: #161b22; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px #010409aa; }
+	.review-bar[hidden] { display: none; }
+	.review-submit:disabled { opacity: .55; cursor: wait; }
+	.review-hint { color: var(--dim); font-size: 12px; }
 
 	@media (max-width: 900px) {
 		.menu-toggle { display: flex; }
@@ -544,7 +603,7 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 <main class="layout">
 	<aside class="sidebar">
 		<nav class="tabs">
-			<a class="${currentPath === "/" ? "active" : ""}" href="/">Working tree</a>
+			<a class="${currentPath === "/review" ? "active" : ""}" href="/review">Review${reviewMode && files.length ? ` · ${files.length}` : ""}</a>
 			<a class="${currentPath === "/staged" ? "active" : ""}" href="/staged">Staged</a>
 		</nav>
 		<section class="files">
@@ -556,8 +615,9 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 			${commitList || '<div class="files__empty">No commits</div>'}
 		</section>
 	</aside>
-	<section class="content"><div id="diff">${diff.trim() ? "" : '<p class="empty">No diff.</p>'}</div></section>
+	<section class="content"><div id="diff">${diff.trim() ? "" : `<p class="empty">${reviewMode ? "Review queue is clear. Waiting for new agent changes…" : "No diff."}</p>`}</div></section>
 </main>
+${reviewMode ? '<div class="review-bar" hidden><span class="review-summary"></span><span class="review-hint">Drag across line numbers to comment</span><button class="review-submit" type="button">Submit review</button></div>' : ""}
 <script src="/diff2html-ui.js"></script>
 <script>
 	function setServerOnline(online) {
@@ -586,6 +646,8 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 	const diff = ${scriptJson(diff)};
 	const files = ${scriptJson(files)};
 	const signatures = ${scriptJson(signatures)};
+	const reviewMode = ${scriptJson(reviewMode)};
+	const comments = [];
 	let viewed = ${scriptJson(viewed)};
 	viewed = Object.fromEntries(files.filter((path) => viewed[path] === signatures[path]).map((path) => [path, viewed[path]]));
 	function isViewed(path) {
@@ -658,6 +720,115 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 			});
 		}
 
+		function wireReviewLines() {
+			if (!reviewMode) return;
+			document.querySelectorAll(".d2h-file-wrapper").forEach((wrapper) => {
+				const rows = [];
+				wrapper.querySelectorAll("tr").forEach((row) => {
+					const numberCell = row.querySelector(".d2h-code-linenumber, .d2h-code-side-linenumber");
+					if (!numberCell || numberCell.classList.contains("d2h-info") || numberCell.classList.contains("d2h-emptyplaceholder")) return;
+					let side; let line;
+					if (numberCell.classList.contains("d2h-code-side-linenumber")) {
+						const panes = Array.from(wrapper.querySelectorAll(":scope > .d2h-files-diff > .d2h-file-side-diff"));
+						side = panes.indexOf(numberCell.closest(".d2h-file-side-diff")) === 0 ? "old" : "new";
+						line = Number(numberCell.textContent.trim());
+					} else {
+						const oldLine = numberCell.querySelector(".line-num1")?.textContent.trim();
+						const newLine = numberCell.querySelector(".line-num2")?.textContent.trim();
+						side = newLine ? "new" : "old";
+						line = Number(newLine || oldLine);
+					}
+					if (!line) return;
+					row.dataset.reviewSide = side;
+					row.dataset.reviewLine = String(line);
+					row.classList.add("review-line");
+					row.title = "Drag line numbers to select a review range";
+					rows.push(row);
+				});
+
+				let selection = null;
+				const selectableRows = (startRow) => rows.filter((row) => row.dataset.reviewSide === startRow.dataset.reviewSide);
+				const paintSelection = (startRow, endRow) => {
+					const candidates = selectableRows(startRow);
+					const start = candidates.indexOf(startRow);
+					const end = candidates.indexOf(endRow);
+					if (end < 0 || Math.abs(end - start) > 19) return false;
+					const low = Math.min(start, end); const high = Math.max(start, end);
+					rows.forEach((row) => row.classList.toggle("review-selected", candidates.indexOf(row) >= low && candidates.indexOf(row) <= high));
+					selection.endRow = endRow;
+					return true;
+				};
+				const clearSelection = () => {
+					selection = null; document.body.classList.remove("review-selecting");
+					rows.forEach((row) => row.classList.remove("review-selected"));
+				};
+				const openEditor = (startRow, endRow) => {
+					if (wrapper.querySelector(".review-editor")) return;
+					const candidates = selectableRows(startRow);
+					const startIndex = candidates.indexOf(startRow); const endIndex = candidates.indexOf(endRow);
+					const selected = candidates.slice(Math.min(startIndex, endIndex), Math.max(startIndex, endIndex) + 1);
+					const firstRow = selected[0]; const lastRow = selected[selected.length - 1];
+					const line = Number(firstRow.dataset.reviewLine); const endLine = Number(lastRow.dataset.reviewLine);
+					const side = firstRow.dataset.reviewSide;
+					const editorRow = document.createElement("tr"); editorRow.className = "review-comment-row";
+					const cell = document.createElement("td"); cell.colSpan = 2;
+					cell.innerHTML = '<div class="review-editor"><span class="review-editor-label"></span><textarea placeholder="Leave a comment for the agent…" autofocus></textarea><div class="review-editor-actions"><button class="review-cancel" type="button">Cancel</button><button class="review-add" type="button">Add</button></div></div>';
+					editorRow.appendChild(cell); lastRow.after(editorRow);
+					cell.querySelector(".review-editor-label").textContent = (side === "old" ? "Old" : "New") + (endLine === line ? " line " + line : " lines " + line + "–" + endLine);
+					const textarea = cell.querySelector("textarea"); textarea.focus();
+					cell.querySelector(".review-cancel").onclick = () => { clearSelection(); editorRow.remove(); };
+					cell.querySelector(".review-add").onclick = () => {
+						const body = textarea.value.trim(); if (!body) return textarea.focus();
+						const comment = { path: wrapper.dataset.path, signature: signatures[wrapper.dataset.path], side, line, endLine, body };
+						comments.push(comment); selected.forEach((row) => row.classList.add("review-commented")); clearSelection();
+						cell.textContent = "";
+						const saved = document.createElement("div"); saved.className = "review-comment";
+						const text = document.createElement("span"); text.textContent = body;
+						const remove = document.createElement("button"); remove.type = "button"; remove.textContent = "Remove";
+						remove.onclick = () => { comments.splice(comments.indexOf(comment), 1); selected.forEach((row) => row.classList.remove("review-commented")); editorRow.remove(); updateReviewBar(); };
+						saved.append(text, remove); cell.appendChild(saved); updateReviewBar();
+					};
+				};
+
+				wrapper.addEventListener("pointerdown", (event) => {
+					const numberCell = event.target.closest(".d2h-code-linenumber, .d2h-code-side-linenumber"); const row = numberCell?.closest("tr.review-line");
+					if (!row || wrapper.querySelector(".review-editor")) return;
+					event.preventDefault(); selection = { startRow: row, endRow: row }; document.body.classList.add("review-selecting"); paintSelection(row, row);
+					numberCell.setPointerCapture?.(event.pointerId);
+				});
+				wrapper.addEventListener("pointermove", (event) => {
+					if (!selection) return;
+					const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("tr.review-line");
+					if (target && target.closest(".d2h-file-wrapper") === wrapper) paintSelection(selection.startRow, target);
+				});
+				wrapper.addEventListener("pointerup", () => {
+					if (!selection) return;
+					const { startRow, endRow } = selection;
+					selection = null;
+					document.body.classList.remove("review-selecting");
+					openEditor(startRow, endRow);
+				});
+				wrapper.addEventListener("pointercancel", clearSelection);
+			});
+		}
+
+		function updateReviewBar() {
+			const bar = document.querySelector(".review-bar"); if (!bar) return;
+			bar.hidden = comments.length === 0;
+			bar.querySelector(".review-summary").textContent = comments.length + (comments.length === 1 ? " comment" : " comments");
+		}
+
+		document.querySelector(".review-submit")?.addEventListener("click", async (event) => {
+			const button = event.currentTarget; button.disabled = true; button.textContent = "Submitting…";
+			try {
+				const response = await fetch("/review/submit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ comments }) });
+				if (!response.ok) throw new Error(await response.text());
+				location.reload();
+			} catch (error) {
+				alert(error.message); button.disabled = false; button.textContent = "Submit review";
+			}
+		});
+
 		function draw() {
 			container.innerHTML = "";
 			new Diff2HtmlUI(container, diff, {
@@ -671,6 +842,7 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 			}).draw();
 			assignFileAnchors();
 			wireFileListCollapse();
+			wireReviewLines();
 			updateModeButtons();
 		}
 
@@ -706,7 +878,7 @@ function readJson(req) {
 		let body = "";
 		req.on("data", (chunk) => {
 			body += chunk;
-			if (body.length > 10000) reject(new Error("Request too large"));
+			if (body.length > 256 * 1024) reject(new Error("Request too large"));
 		});
 		req.on("end", () => {
 			try { resolve(JSON.parse(body || "{}")); } catch (error) { reject(error); }
@@ -722,84 +894,89 @@ async function openBrowser(target) {
 }
 
 module.exports = function piDiff(pi) {
-	pi.registerCommand("diff", {
-		description: "Open git diff in a GitHub-like browser view",
-		handler: async (args, ctx) => {
-			const diffArgs = shlex(args || "");
-			stopServer();
-			const viewedState = new Map();
+	async function start(args, ctx, initialPath) {
+		const diffArgs = shlex(args || "");
+		stopServer();
+		const viewedState = new Map();
+		const reviewedState = new Map();
 
-			server = http.createServer(async (req, res) => {
-				const pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
-				if (pathname === "/diff2html.css") {
-					res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
-					res.end(diffCss);
-					return;
-				}
-				if (pathname === "/diff2html-ui.js") {
-					res.writeHead(200, { "content-type": "application/javascript; charset=utf-8" });
-					res.end(diffUiJs);
-					return;
-				}
-				if (pathname === "/events") {
-					res.writeHead(200, {
-						"content-type": "text/event-stream; charset=utf-8",
-						"cache-control": "no-cache",
-						connection: "keep-alive",
-					});
-					const shouldStartMonitor = reloadClients.size === 0;
-					reloadClients.add(res);
-					if (shouldStartMonitor) void startChangeMonitor(ctx.cwd);
-					req.on("close", () => {
-						reloadClients.delete(res);
-						if (reloadClients.size === 0) void stopChangeMonitor();
-					});
-					return;
-				}
+		server = http.createServer(async (req, res) => {
+			const pathname = new URL(req.url || "/", "http://127.0.0.1").pathname;
+			if (pathname === "/diff2html.css") {
+				res.writeHead(200, { "content-type": "text/css; charset=utf-8" });
+				res.end(diffCss);
+				return;
+			}
+			if (pathname === "/diff2html-ui.js") {
+				res.writeHead(200, { "content-type": "application/javascript; charset=utf-8" });
+				res.end(diffUiJs);
+				return;
+			}
+			if (pathname === "/events") {
+				res.writeHead(200, {
+					"content-type": "text/event-stream; charset=utf-8",
+					"cache-control": "no-cache",
+					connection: "keep-alive",
+				});
+				const shouldStartMonitor = reloadClients.size === 0;
+				reloadClients.add(res);
+				if (shouldStartMonitor) void startChangeMonitor(ctx.cwd);
+				req.on("close", () => {
+					reloadClients.delete(res);
+					if (reloadClients.size === 0) void stopChangeMonitor();
+				});
+				return;
+			}
 
-				try {
-					if (pathname === "/viewed" && req.method === "POST") {
-						const { currentPath, path, signature, checked } = await readJson(req);
-						if (typeof currentPath === "string" && typeof path === "string" && typeof signature === "string") {
-							const key = `${currentPath}\0${path}`;
-							checked ? viewedState.set(key, signature) : viewedState.delete(key);
+			try {
+				if (pathname === "/viewed" && req.method === "POST") {
+					const { currentPath, path, signature, checked } = await readJson(req);
+					if (typeof currentPath === "string" && typeof path === "string" && typeof signature === "string") {
+						const key = `${currentPath}\0${path}`;
+						checked ? viewedState.set(key, signature) : viewedState.delete(key);
+					}
+					res.writeHead(204); res.end(); return;
+				}
+				if (pathname === "/review/submit" && req.method === "POST") {
+					if (!String(req.headers["content-type"] || "").startsWith("application/json")) throw new Error("Expected application/json");
+					const { comments } = await readJson(req);
+					if (!Array.isArray(comments) || !comments.length || comments.length > 200) throw new Error("Add at least one review comment");
+					const current = await view(ctx.cwd, "/review", diffArgs, reviewedState);
+					for (const comment of comments) {
+						if (!comment || typeof comment.path !== "string" || !current.files.includes(comment.path) || current.signatures[comment.path] !== comment.signature) {
+							res.writeHead(409, { "content-type": "text/plain; charset=utf-8" }); res.end("The diff changed while you were reviewing. Reload and try again."); return;
 						}
-						res.writeHead(204);
-						res.end();
-						return;
+						if (!['old', 'new'].includes(comment.side) || !Number.isInteger(comment.line) || !Number.isInteger(comment.endLine) || comment.endLine < comment.line || typeof comment.body !== "string" || !comment.body.trim() || comment.body.length > 10000) throw new Error("Invalid review comment");
 					}
-					if (pathname === "/favicon.ico") {
-						res.writeHead(204);
-						res.end();
-						return;
-					}
-					const [data, commitList, repo] = await Promise.all([
-						view(ctx.cwd, pathname, diffArgs),
-						commits(ctx.cwd),
-						repoInfo(ctx.cwd),
-					]);
-					const viewed = Object.fromEntries(data.files.filter((path) => viewedState.get(`${pathname}\0${path}`) === data.signatures[path]).map((path) => [path, data.signatures[path]]));
-					res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-					res.end(page({ cwd: ctx.cwd, currentPath: pathname, commits: commitList, repo, viewed, ...data }));
-				} catch (error) {
-					const notFound = error.message === "Not found";
-					res.writeHead(notFound ? 404 : 500, { "content-type": "text/plain; charset=utf-8" });
-					res.end(error.message);
+					pi.sendUserMessage(formatReviewFeedback(comments), { deliverAs: "followUp" });
+					for (const path of current.files) reviewedState.set(path, current.signatures[path]);
+					res.writeHead(204); res.end(); notifyReloadClients(); return;
 				}
-			});
+				if (pathname === "/favicon.ico") { res.writeHead(204); res.end(); return; }
+				const [data, commitList, repo] = await Promise.all([
+					view(ctx.cwd, pathname, diffArgs, reviewedState), commits(ctx.cwd), repoInfo(ctx.cwd),
+				]);
+				const viewed = Object.fromEntries(data.files.filter((path) => viewedState.get(`${pathname}\0${path}`) === data.signatures[path]).map((path) => [path, data.signatures[path]]));
+				res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+				res.end(page({ cwd: ctx.cwd, currentPath: pathname, commits: commitList, repo, viewed, ...data }));
+			} catch (error) {
+				const notFound = error.message === "Not found";
+				res.writeHead(notFound ? 404 : 400, { "content-type": "text/plain; charset=utf-8" }); res.end(error.message);
+			}
+		});
 
-			await new Promise((resolve, reject) => {
-				server.once("error", reject);
-				server.listen(0, "127.0.0.1", resolve);
-			});
+		await new Promise((resolve, reject) => { server.once("error", reject); server.listen(0, "127.0.0.1", resolve); });
+		const { port } = server.address();
+		const url = `http://127.0.0.1:${port}${initialPath}`;
+		await openBrowser(url);
+		ctx.ui.notify(`${initialPath === "/review" ? "Review" : "Diff"} ready: ${url}`, "info");
+		const link = `\x1b]8;;${url}\x1b\\\x1b[4m${initialPath === "/review" ? "review" : "diff"}\x1b[24m\x1b]8;;\x1b\\`;
+		ctx.ui.setStatus("diff", ctx.ui.theme.fg("muted", link));
+	}
 
-			const { port } = server.address();
-			const url = `http://127.0.0.1:${port}/`;
-			await openBrowser(url);
-			ctx.ui.notify(`Diff ready: ${url}`, "info");
-			const link = `\x1b]8;;${url}\x1b\\\x1b[4mdiff\x1b[24m\x1b]8;;\x1b\\`;
-			ctx.ui.setStatus("diff", ctx.ui.theme.fg("muted", link));
-		},
+	pi.registerCommand("diff", {
+		description: "Review and annotate agent changes in the browser",
+		handler: (args, ctx) => start(args, ctx, "/review"),
 	});
 
 	pi.on("session_shutdown", (_event, ctx) => {
