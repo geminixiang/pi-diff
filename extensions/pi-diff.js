@@ -1,3 +1,681 @@
+function createReviewWorkspace(initialState) {
+	function setServerOnline(online) {
+		document.getElementById("server-icon").href = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="' + (online ? "#22c55e" : "#ef4444") + '"/></svg>');
+		const dot = document.querySelector(".server-dot");
+		dot?.classList.toggle("off", !online);
+		if (dot) dot.title = dot.ariaLabel = online ? "Diff server connected" : "Diff server disconnected";
+	}
+	const events = new EventSource("/events");
+	events.onopen = () => setServerOnline(true);
+	events.onmessage = () => refresh();
+	events.onerror = () => setServerOnline(false);
+
+	(() => {
+		const toggle = document.querySelector(".menu-toggle");
+		const scrim = document.querySelector(".scrim");
+		const close = () => document.body.classList.remove("menu-open");
+		toggle?.addEventListener("click", () => document.body.classList.toggle("menu-open"));
+		scrim?.addEventListener("click", close);
+		document.querySelector(".sidebar")?.addEventListener("click", (event) => {
+			if (event.target.closest("a, .file")) close();
+		});
+		addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
+	})();
+
+	let diff = initialState.diff;
+	let files = initialState.files;
+	let signatures = initialState.signatures;
+	const reviewMode = initialState.reviewMode;
+	const emptyMessage = initialState.emptyMessage;
+	const defaultHint = "Select code or drag line numbers to comment";
+	const reviewStorageKey = "pi-diff-review:" + location.pathname;
+	let comments = [];
+	let editorState = null;
+	let pendingRefresh = false;
+	let refreshing = false;
+	let viewed = initialState.viewed;
+	viewed = Object.fromEntries(files.filter((path) => viewed[path] === signatures[path]).map((path) => [path, viewed[path]]));
+	function isViewed(path) {
+		return viewed[path] === signatures[path];
+	}
+	function saveViewed(path, signature, checked) {
+		checked ? viewed[path] = signature : delete viewed[path];
+		const body = JSON.stringify({ currentPath: location.pathname, path, signature, checked });
+		fetch("/viewed", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
+	}
+	function setDiffViewed(wrapper, checked) {
+		wrapper.querySelector(".d2h-file-collapse")?.classList.toggle("d2h-selected", checked);
+		wrapper.querySelector(".d2h-file-diff, .d2h-files-diff")?.classList.toggle("d2h-d-none", checked);
+	}
+	function syncDiffViewed() {
+		document.querySelectorAll(".d2h-file-wrapper").forEach((wrapper) => setDiffViewed(wrapper, isViewed(wrapper.dataset.path)));
+	}
+	document.addEventListener("change", (event) => {
+		const checkbox = event.target.closest?.(".d2h-file-collapse-input");
+		if (!checkbox) return;
+		saveViewed(checkbox.dataset.path, checkbox.dataset.signature, checkbox.checked);
+		setTimeout(syncDiffViewed, 0);
+	});
+	let outputFormat = matchMedia("(max-width: 900px)").matches ? "line-by-line" : "side-by-side";
+	const container = document.getElementById("diff");
+	const modeButtons = document.querySelectorAll(".view-mode");
+
+	function updateModeButtons() {
+		modeButtons.forEach((button) => button.classList.toggle("is-active", button.dataset.mode === outputFormat));
+	}
+
+	function setActive(index) {
+		document.querySelectorAll(".file").forEach((item) => item.classList.toggle("active", item.dataset.index === String(index)));
+	}
+
+	const headerH = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--header-h")) || 42;
+	const observer = new IntersectionObserver((entries) => {
+		const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
+		if (visible) setActive(visible.target.id.replace("file-", ""));
+	}, { rootMargin: "-" + headerH + "px 0px -60% 0px" });
+
+	function assignFileAnchors() {
+		observer.disconnect();
+		document.querySelectorAll(".d2h-file-wrapper").forEach((wrapper, index) => {
+			const path = files[index];
+			wrapper.id = "file-" + index;
+			wrapper.dataset.path = path;
+			const checkbox = wrapper.querySelector(".d2h-file-collapse-input");
+			if (checkbox) {
+				checkbox.dataset.path = path;
+				checkbox.dataset.signature = signatures[path] || "";
+				checkbox.checked = isViewed(path);
+			}
+			setDiffViewed(wrapper, isViewed(path));
+			observer.observe(wrapper);
+		});
+	}
+
+	function wireFileListCollapse() {
+		const fileList = document.querySelector(".d2h-file-list-wrapper");
+		if (!fileList) return;
+		new ResizeObserver(([entry]) => document.documentElement.style.setProperty("--file-list-h", (entry.borderBoxSize?.[0]?.blockSize || fileList.offsetHeight) + "px")).observe(fileList);
+		fileList.addEventListener("click", (event) => {
+			if (event.target.closest(".d2h-file-list, .d2h-file-switch")) return;
+			const show = fileList.querySelector(".d2h-show");
+			fileList.querySelector(show?.style.display === "none" ? ".d2h-hide" : ".d2h-show")?.click();
+		});
+	}
+
+	const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
+	const wrapperFor = (path) => Array.from(document.querySelectorAll(".d2h-file-wrapper")).find((wrapper) => wrapper.dataset.path === path);
+	const reviewRows = (wrapper, side) => Array.from(wrapper.querySelectorAll("tr.review-line")).filter((row) => row.dataset.reviewSide === side);
+	const sideRangeLabel = (side, line, endLine) => (side === "old" ? "Old" : "New") + (endLine === line ? " line " + line : " lines " + line + "–" + endLine);
+	const rangeLabel = (item) => (item.oldLine
+		? sideRangeLabel("old", item.oldLine, item.oldEndLine) + " · " + sideRangeLabel("new", item.line, item.endLine)
+		: sideRangeLabel(item.side, item.line, item.endLine));
+
+	function persistDrafts() {
+		if (!reviewMode) return;
+		try { sessionStorage.setItem(reviewStorageKey, JSON.stringify({ comments, draft: editorState })); } catch {}
+	}
+
+	function restoreDrafts() {
+		if (!reviewMode) return;
+		try {
+			const saved = JSON.parse(sessionStorage.getItem(reviewStorageKey) || "null");
+			if (Array.isArray(saved?.comments)) comments = saved.comments.filter((comment) => comment && typeof comment.path === "string" && typeof comment.body === "string" && comment.body.trim());
+			if (saved?.draft && typeof saved.draft.path === "string") editorState = { ...saved.draft, restored: true };
+		} catch {}
+	}
+
+	function insertReviewRow(anchorRow, row) {
+		anchorRow.after(row);
+		const pane = anchorRow.closest(".d2h-file-side-diff");
+		const panes = pane ? Array.from(pane.closest(".d2h-files-diff").querySelectorAll(":scope > .d2h-file-side-diff")) : [];
+		const twinBody = panes.length === 2 ? panes[pane === panes[0] ? 1 : 0].querySelector("tbody") : null;
+		const twin = twinBody?.children[Array.prototype.indexOf.call(anchorRow.parentElement.children, anchorRow)];
+		if (!twin) return;
+		const spacer = document.createElement("tr");
+		spacer.className = "review-spacer-row";
+		const pad = document.createElement("td");
+		pad.colSpan = 2;
+		spacer.appendChild(pad);
+		twin.after(spacer);
+		const sync = () => { pad.style.height = row.getBoundingClientRect().height + "px"; };
+		new ResizeObserver(sync).observe(row.firstElementChild);
+		sync();
+	}
+
+	function buildCommentRow(comment) {
+		const row = document.createElement("tr");
+		row.className = "review-comment-row";
+		const cell = document.createElement("td");
+		cell.colSpan = 2;
+		row.appendChild(cell);
+		const box = document.createElement("div");
+		box.className = "review-comment";
+		const main = document.createElement("div");
+		main.className = "review-comment-main";
+		const meta = document.createElement("div");
+		meta.className = "review-comment-meta";
+		const label = document.createElement("span");
+		label.textContent = rangeLabel(comment);
+		meta.appendChild(label);
+		if (signatures[comment.path] !== comment.signature) {
+			const stale = document.createElement("span");
+			stale.className = "review-stale";
+			stale.textContent = "file changed since this comment";
+			meta.appendChild(stale);
+		}
+		const body = document.createElement("div");
+		body.className = "review-comment-body";
+		body.textContent = comment.body;
+		main.append(meta, body);
+		const actions = document.createElement("div");
+		actions.className = "review-comment-actions";
+		const edit = document.createElement("button");
+		edit.type = "button";
+		edit.textContent = "Edit";
+		edit.onclick = () => {
+			editorState = { editingId: comment.id, path: comment.path, signature: comment.signature, side: comment.side, line: comment.line, endLine: comment.endLine, oldLine: comment.oldLine, oldEndLine: comment.oldEndLine, excerpt: comment.excerpt, body: comment.body };
+			renderComments({ focusEditor: true });
+		};
+		const remove = document.createElement("button");
+		remove.type = "button";
+		remove.textContent = "Remove";
+		remove.onclick = () => {
+			comments = comments.filter((item) => item !== comment);
+			renderComments();
+		};
+		actions.append(edit, remove);
+		box.append(main, actions);
+		cell.appendChild(box);
+		return row;
+	}
+
+	function buildEditorRow(state) {
+		const row = document.createElement("tr");
+		row.className = "review-comment-row review-editor-row";
+		const cell = document.createElement("td");
+		cell.colSpan = 2;
+		row.appendChild(cell);
+		cell.innerHTML = '<div class="review-editor"><span class="review-editor-label"></span><textarea placeholder="Leave a comment for the agent…"></textarea><div class="review-editor-actions"><button class="review-cancel" type="button" title="Esc">Cancel</button><button class="review-add" type="button"></button></div></div>';
+		cell.querySelector(".review-editor-label").textContent = rangeLabel(state);
+		const textarea = cell.querySelector("textarea");
+		textarea.value = state.body || "";
+		const add = cell.querySelector(".review-add");
+		add.textContent = state.editingId ? "Save" : "Add comment";
+		add.title = navigator.platform.includes("Mac") ? "⌘⏎" : "Ctrl+Enter";
+		const closeEditor = () => {
+			editorState = null;
+			renderComments();
+			if (pendingRefresh) { pendingRefresh = false; refresh(); }
+		};
+		const commit = () => {
+			const body = textarea.value.trim();
+			if (!body) return textarea.focus();
+			if (state.editingId) {
+				const existing = comments.find((item) => item.id === state.editingId);
+				if (existing) existing.body = body;
+			} else {
+				comments.push({ id: uid(), path: state.path, signature: state.signature, side: state.side, line: state.line, endLine: state.endLine, oldLine: state.oldLine, oldEndLine: state.oldEndLine, excerpt: state.excerpt, body });
+			}
+			closeEditor();
+		};
+		textarea.addEventListener("input", () => { state.body = textarea.value; persistDrafts(); });
+		textarea.addEventListener("keydown", (event) => {
+			if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); commit(); }
+			else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeEditor(); }
+		});
+		textarea.addEventListener("blur", () => {
+			if (pendingRefresh && !textarea.value.trim()) { pendingRefresh = false; refresh(); }
+		});
+		cell.querySelector(".review-cancel").onclick = closeEditor;
+		add.onclick = commit;
+		return row;
+	}
+
+	function markOldRange(wrapper, item, className) {
+		if (!item.oldLine) return;
+		reviewRows(wrapper, "old")
+			.filter((row) => Number(row.dataset.reviewLine) >= item.oldLine && Number(row.dataset.reviewLine) <= item.oldEndLine)
+			.forEach((row) => row.classList.add(className));
+	}
+
+	function attachCommentRow(comment) {
+		const wrapper = wrapperFor(comment.path);
+		if (!wrapper) return false;
+		const rows = reviewRows(wrapper, comment.side);
+		if (!rows.length) return false;
+		const selected = rows.filter((row) => Number(row.dataset.reviewLine) >= comment.line && Number(row.dataset.reviewLine) <= comment.endLine);
+		selected.forEach((row) => row.classList.add("review-commented"));
+		markOldRange(wrapper, comment, "review-commented");
+		const anchor = selected[selected.length - 1] || rows.filter((row) => Number(row.dataset.reviewLine) < comment.line).pop() || rows[0];
+		insertReviewRow(anchor, buildCommentRow(comment));
+		return true;
+	}
+
+	function attachEditorRow(state, focusEditor) {
+		const wrapper = wrapperFor(state.path);
+		const rows = wrapper ? reviewRows(wrapper, state.side) : [];
+		if (!rows.length) return false;
+		const selected = rows.filter((row) => Number(row.dataset.reviewLine) >= state.line && Number(row.dataset.reviewLine) <= state.endLine);
+		selected.forEach((row) => row.classList.add("review-selected"));
+		markOldRange(wrapper, state, "review-selected");
+		const anchor = selected[selected.length - 1] || rows.filter((row) => Number(row.dataset.reviewLine) < state.line).pop() || rows[0];
+		const row = buildEditorRow(state);
+		insertReviewRow(anchor, row);
+		const textarea = row.querySelector("textarea");
+		if (state.restored) {
+			delete state.restored;
+			row.scrollIntoView({ block: "center" });
+			focusEditor = true;
+		}
+		if (focusEditor) {
+			textarea.focus();
+			textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+		}
+		return true;
+	}
+
+	function renderOrphans(orphans) {
+		if (!orphans.length) return;
+		const box = document.createElement("div");
+		box.className = "review-orphans";
+		const title = document.createElement("div");
+		title.className = "review-orphans-title";
+		title.textContent = "Comments on lines no longer in the diff — still included in the review:";
+		box.appendChild(title);
+		for (const comment of orphans) {
+			const item = document.createElement("div");
+			item.className = "review-orphan";
+			const text = document.createElement("span");
+			text.textContent = comment.path + " · " + rangeLabel(comment) + " — " + comment.body;
+			const remove = document.createElement("button");
+			remove.type = "button";
+			remove.textContent = "Remove";
+			remove.onclick = () => {
+				comments = comments.filter((entry) => entry !== comment);
+				renderComments();
+			};
+			item.append(text, remove);
+			box.appendChild(item);
+		}
+		container.prepend(box);
+	}
+
+	function renderComments(options = {}) {
+		if (!reviewMode) return;
+		document.querySelectorAll(".review-comment-row, .review-spacer-row, .review-orphans").forEach((node) => node.remove());
+		document.querySelectorAll(".review-commented, .review-selected").forEach((row) => row.classList.remove("review-commented", "review-selected"));
+		const orphans = [];
+		for (const comment of comments) {
+			if (editorState && editorState.editingId === comment.id) continue;
+			if (!attachCommentRow(comment)) orphans.push(comment);
+		}
+		if (editorState && !attachEditorRow(editorState, options.focusEditor)) {
+			const state = editorState;
+			editorState = null;
+			if (!state.editingId && state.body && state.body.trim()) {
+				comments.push({ id: uid(), path: state.path, signature: state.signature, side: state.side, line: state.line, endLine: state.endLine, excerpt: state.excerpt, body: state.body.trim() });
+			}
+			return renderComments(options);
+		}
+		renderOrphans(orphans);
+		updateReviewBar();
+		persistDrafts();
+	}
+
+	function wireReviewLines() {
+		document.querySelectorAll(".d2h-file-wrapper").forEach((wrapper) => {
+			const rows = [];
+			wrapper.querySelectorAll("tr").forEach((row) => {
+				const numberCell = row.querySelector(".d2h-code-linenumber, .d2h-code-side-linenumber");
+				if (!numberCell || numberCell.classList.contains("d2h-info") || numberCell.classList.contains("d2h-emptyplaceholder")) return;
+				let side; let line;
+				if (numberCell.classList.contains("d2h-code-side-linenumber")) {
+					const panes = Array.from(wrapper.querySelectorAll(":scope > .d2h-files-diff > .d2h-file-side-diff"));
+					side = panes.indexOf(numberCell.closest(".d2h-file-side-diff")) === 0 ? "old" : "new";
+					line = Number(numberCell.textContent.trim());
+				} else {
+					const oldLine = numberCell.querySelector(".line-num1")?.textContent.trim();
+					const newLine = numberCell.querySelector(".line-num2")?.textContent.trim();
+					side = newLine ? "new" : "old";
+					line = Number(newLine || oldLine);
+				}
+				if (!line) return;
+				row.dataset.reviewSide = side;
+				row.dataset.reviewLine = String(line);
+				row.classList.add("review-line");
+				numberCell.title = "Comment on this line — drag for a range";
+				rows.push(row);
+			});
+
+			let selection = null;
+			const sameSideRows = (startRow) => rows.filter((row) => row.dataset.reviewSide === startRow.dataset.reviewSide);
+			const paintSelection = (startRow, endRow) => {
+				const candidates = sameSideRows(startRow);
+				const start = candidates.indexOf(startRow);
+				const end = candidates.indexOf(endRow);
+				if (end < 0) return;
+				const low = Math.min(start, end);
+				const high = Math.max(start, end);
+				rows.forEach((row) => row.classList.toggle("review-selected", candidates.indexOf(row) >= low && candidates.indexOf(row) <= high));
+				selection.endRow = endRow;
+			};
+			const clearSelection = () => {
+				selection = null;
+				document.body.classList.remove("review-selecting");
+				rows.forEach((row) => row.classList.remove("review-selected"));
+			};
+			wrapper.addEventListener("pointerdown", (event) => {
+				const numberCell = event.target.closest(".d2h-code-linenumber, .d2h-code-side-linenumber");
+				const row = numberCell?.closest("tr.review-line");
+				if (!row) return;
+				event.preventDefault();
+				const openTextarea = document.querySelector(".review-editor textarea");
+				if (openTextarea) return openTextarea.focus();
+				selection = { startRow: row, endRow: row };
+				document.body.classList.add("review-selecting");
+				paintSelection(row, row);
+				numberCell.setPointerCapture?.(event.pointerId);
+			});
+			wrapper.addEventListener("pointermove", (event) => {
+				if (!selection) return;
+				const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("tr.review-line");
+				if (target && target.closest(".d2h-file-wrapper") === wrapper) paintSelection(selection.startRow, target);
+			});
+			wrapper.addEventListener("pointerup", () => {
+				if (!selection) return;
+				const { startRow, endRow } = selection;
+				clearSelection();
+				openEditorFromRows(wrapper, startRow, endRow);
+			});
+			wrapper.addEventListener("pointercancel", clearSelection);
+		});
+	}
+
+	function openEditorAt(path, side, line, endLine, excerpt, oldRange) {
+		const openTextarea = document.querySelector(".review-editor textarea");
+		if (openTextarea) return openTextarea.focus();
+		editorState = { path, signature: signatures[path] || "", side, line, endLine, oldLine: oldRange?.line, oldEndLine: oldRange?.endLine, excerpt, body: "" };
+		renderComments({ focusEditor: true });
+	}
+
+	function openEditorFromRows(wrapper, startRow, endRow) {
+		const rows = reviewRows(wrapper, startRow.dataset.reviewSide);
+		const startIndex = rows.indexOf(startRow);
+		const endIndex = rows.indexOf(endRow);
+		if (startIndex < 0 || endIndex < 0) return;
+		const selected = rows.slice(Math.min(startIndex, endIndex), Math.max(startIndex, endIndex) + 1);
+		const first = selected[0];
+		const last = selected[selected.length - 1];
+		const excerpt = normalizeExcerpt(first.querySelector(".d2h-code-line-ctn")?.textContent || "");
+		openEditorAt(wrapper.dataset.path, first.dataset.reviewSide, Number(first.dataset.reviewLine), Number(last.dataset.reviewLine), excerpt);
+	}
+
+	function normalizeExcerpt(text) {
+		return text.replace(/(^|\\n)[+\\-]/g, "$1").replace(/\\s+/g, " ").trim().slice(0, 160);
+	}
+
+	const selectionButton = (() => {
+		if (!reviewMode) return null;
+		const button = document.createElement("button");
+		button.type = "button";
+		button.className = "review-selection-btn";
+		button.hidden = true;
+		document.body.appendChild(button);
+		return button;
+	})();
+	let pendingSelection = null;
+	let selectionMouseDown = false;
+
+	function closestReviewRow(node) {
+		const el = node && (node.nodeType === 1 ? node : node.parentElement);
+		return el ? el.closest("tr.review-line") : null;
+	}
+
+	function hideSelectionButton() {
+		pendingSelection = null;
+		if (selectionButton) selectionButton.hidden = true;
+	}
+
+	function evaluateSelection() {
+		if (!selectionButton) return;
+		const sel = getSelection();
+		if (!sel || sel.isCollapsed || !sel.rangeCount) return hideSelectionButton();
+		const range = sel.getRangeAt(0);
+		const startRow = closestReviewRow(range.startContainer);
+		const endRow = closestReviewRow(range.endContainer);
+		if (!startRow || !endRow) return hideSelectionButton();
+		const wrapper = startRow.closest(".d2h-file-wrapper");
+		if (endRow.closest(".d2h-file-wrapper") !== wrapper) return hideSelectionButton();
+		if (startRow.closest(".d2h-file-side-diff") !== endRow.closest(".d2h-file-side-diff")) return hideSelectionButton();
+		const rows = Array.from(wrapper.querySelectorAll("tr.review-line")).filter((row) => range.intersectsNode(row));
+		const linesOf = (which) => rows.filter((row) => row.dataset.reviewSide === which).map((row) => Number(row.dataset.reviewLine));
+		const newLines = linesOf("new");
+		const oldLines = linesOf("old");
+		const side = newLines.length ? "new" : "old";
+		const lines = side === "new" ? newLines : oldLines;
+		if (!lines.length) return hideSelectionButton();
+		const line = Math.min(...lines);
+		const endLine = Math.max(...lines);
+		const oldRange = side === "new" && oldLines.length ? { line: Math.min(...oldLines), endLine: Math.max(...oldLines) } : null;
+		pendingSelection = { path: wrapper.dataset.path, side, line, endLine, oldRange, excerpt: normalizeExcerpt(sel.toString()) };
+		const bare = (from, to) => (to === from ? String(from) : from + "–" + to);
+		selectionButton.textContent = oldRange
+			? "Comment old " + bare(oldRange.line, oldRange.endLine) + " + new " + bare(line, endLine)
+			: "Comment " + (side === "old" ? "old " : "") + (endLine === line ? "line " + line : "lines " + line + "–" + endLine);
+		const rects = range.getClientRects();
+		const rect = rects.length ? rects[rects.length - 1] : range.getBoundingClientRect();
+		selectionButton.hidden = false;
+		const left = Math.min(rect.right + 6 + scrollX, scrollX + innerWidth - selectionButton.offsetWidth - 12);
+		selectionButton.style.left = Math.max(scrollX + 4, left) + "px";
+		selectionButton.style.top = (rect.bottom + 6 + scrollY) + "px";
+	}
+
+	if (selectionButton) {
+		selectionButton.addEventListener("pointerdown", (event) => {
+			event.preventDefault();
+			const info = pendingSelection;
+			hideSelectionButton();
+			getSelection()?.removeAllRanges();
+			if (info) openEditorAt(info.path, info.side, info.line, info.endLine, info.excerpt, info.oldRange);
+		});
+		document.addEventListener("pointerdown", (event) => {
+			if (event.target !== selectionButton) selectionMouseDown = true;
+		}, true);
+		document.addEventListener("pointerup", () => {
+			selectionMouseDown = false;
+			setTimeout(evaluateSelection, 0);
+		}, true);
+		document.addEventListener("selectionchange", () => {
+			const sel = getSelection();
+			if (!sel || sel.isCollapsed) return hideSelectionButton();
+			if (!selectionMouseDown) evaluateSelection();
+		});
+	}
+
+	function updateReviewBar() {
+		const bar = document.querySelector(".review-bar");
+		if (!bar) return;
+		bar.hidden = !diff.trim() && !comments.length;
+		const count = comments.length;
+		bar.querySelector(".review-hint").hidden = count > 0 || !!editorState;
+		const summary = bar.querySelector(".review-summary");
+		summary.hidden = !count;
+		summary.textContent = count + (count === 1 ? " comment" : " comments");
+		bar.querySelector(".review-submit").hidden = !count;
+	}
+
+	document.querySelector(".review-submit")?.addEventListener("click", async (event) => {
+		const button = event.currentTarget;
+		button.disabled = true;
+		button.textContent = "Submitting…";
+		const bar = document.querySelector(".review-bar");
+		const errorNote = bar.querySelector(".review-error");
+		errorNote.hidden = true;
+		try {
+			const response = await fetch("/review/submit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ comments }) });
+			if (!response.ok) throw new Error(await response.text() || "Submit failed");
+			comments = [];
+			editorState = null;
+			const hint = bar.querySelector(".review-hint");
+			hint.textContent = "Review sent to the agent ✓";
+			setTimeout(() => { hint.textContent = defaultHint; }, 4000);
+			renderComments();
+			refresh();
+		} catch (error) {
+			errorNote.textContent = error.message;
+			errorNote.hidden = false;
+			setTimeout(() => { errorNote.hidden = true; }, 6000);
+		} finally {
+			button.disabled = false;
+			button.textContent = "Submit review";
+		}
+	});
+
+	function scrollAnchor() {
+		for (const wrapper of document.querySelectorAll(".d2h-file-wrapper")) {
+			const rect = wrapper.getBoundingClientRect();
+			if (rect.bottom > headerH + 10) return { path: wrapper.dataset.path, top: rect.top };
+		}
+		return null;
+	}
+
+	function restoreScroll(anchor) {
+		const target = anchor && wrapperFor(anchor.path);
+		if (target) scrollBy(0, target.getBoundingClientRect().top - anchor.top);
+	}
+
+	function renderSidebar(commitList) {
+		const filesSection = document.querySelector(".files");
+		if (filesSection) {
+			filesSection.textContent = "";
+			const label = document.createElement("div");
+			label.className = "section-label";
+			label.textContent = "Files" + (files.length ? " · " + files.length : "");
+			filesSection.appendChild(label);
+			if (!files.length) {
+				const empty = document.createElement("div");
+				empty.className = "files__empty";
+				empty.textContent = "No files";
+				filesSection.appendChild(empty);
+			}
+			files.forEach((path, index) => {
+				const button = document.createElement("button");
+				button.className = "file";
+				button.type = "button";
+				button.dataset.index = String(index);
+				button.title = path;
+				const span = document.createElement("span");
+				span.className = "file-path";
+				span.textContent = "⁨" + path + "⁩";
+				button.appendChild(span);
+				filesSection.appendChild(button);
+			});
+		}
+		const reviewTab = document.querySelector('.tabs a[href="/review"]');
+		if (reviewTab && reviewMode) reviewTab.textContent = files.length ? "Review · " + files.length : "Review";
+		const commitsSection = document.querySelector(".commits");
+		if (commitsSection && commitList.length) {
+			commitsSection.textContent = "";
+			const label = document.createElement("div");
+			label.className = "section-label";
+			label.textContent = "Commits";
+			commitsSection.appendChild(label);
+			for (const commit of commitList) {
+				const link = document.createElement("a");
+				const path = "/commit/" + commit.sha;
+				link.className = location.pathname === path ? "commit active" : "commit";
+				link.href = path;
+				const sha = document.createElement("b");
+				sha.textContent = commit.shortSha;
+				const when = document.createElement("span");
+				when.textContent = commit.when;
+				link.append(sha, " " + commit.subject, when);
+				commitsSection.appendChild(link);
+			}
+		}
+	}
+
+	async function refresh() {
+		const activeEditor = document.querySelector(".review-editor textarea");
+		if (refreshing || (activeEditor && (activeEditor === document.activeElement || activeEditor.value.trim()))) {
+			pendingRefresh = true;
+			return;
+		}
+		refreshing = true;
+		try {
+			const response = await fetch(location.pathname, { headers: { accept: "application/json" } });
+			if (!response.ok) throw new Error("Refresh failed");
+			const data = await response.json();
+			diff = data.diff;
+			files = data.files;
+			signatures = data.signatures;
+			viewed = Object.fromEntries(files.filter((path) => data.viewed?.[path] === signatures[path]).map((path) => [path, data.viewed[path]]));
+			renderSidebar(data.commits || []);
+			const anchor = scrollAnchor();
+			draw();
+			restoreScroll(anchor);
+		} catch {
+			location.reload();
+			return;
+		} finally {
+			refreshing = false;
+		}
+		if (pendingRefresh) {
+			pendingRefresh = false;
+			refresh();
+		}
+	}
+
+	function draw() {
+		hideSelectionButton();
+		container.textContent = "";
+		if (!diff.trim()) {
+			const empty = document.createElement("p");
+			empty.className = "empty";
+			empty.textContent = emptyMessage;
+			container.appendChild(empty);
+			if (reviewMode) renderComments();
+			return;
+		}
+		new Diff2HtmlUI(container, diff, {
+			colorScheme: "dark",
+			diffMaxChanges: 3000,
+			diffMaxLineLength: 2000,
+			diffTooBigMessage: () => "Diff too large to render. Narrow the path or commit range.",
+			highlight: false,
+			matching: "none",
+			outputFormat,
+		}).draw();
+		assignFileAnchors();
+		wireFileListCollapse();
+		if (reviewMode) {
+			wireReviewLines();
+			renderComments();
+		}
+		updateModeButtons();
+	}
+
+	modeButtons.forEach((button) => button.addEventListener("click", () => {
+		outputFormat = button.dataset.mode;
+		draw();
+	}));
+
+	document.querySelector(".files")?.addEventListener("click", (event) => {
+		const item = event.target.closest(".file");
+		if (!item) return;
+		document.getElementById("file-" + item.dataset.index)?.scrollIntoView({ behavior: "smooth", block: "start" });
+		setActive(item.dataset.index);
+	});
+
+	restoreDrafts();
+	draw();
+	return { draw, refresh };
+}
+
+function reviewWorkspaceSource() {
+	return `globalThis.piDiffReviewWorkspace = (${createReviewWorkspace.toString()})(JSON.parse(document.getElementById("pi-diff-state").textContent));`;
+}
+
 const http = require("node:http");
 const { execFile } = require("node:child_process");
 const { createHash } = require("node:crypto");
@@ -641,678 +1319,8 @@ function page({ cwd, currentPath, title, command, diff, files, signatures = {}, 
 </main>
 ${reviewMode ? `<div class="review-bar"${diff.trim() ? "" : " hidden"}><span class="review-hint">Select code or drag line numbers to comment</span><span class="review-summary" hidden></span><span class="review-error" hidden></span><button class="review-submit" type="button" hidden title="Send all comments to the agent">Submit review</button></div>` : ""}
 <script src="/diff2html-ui.js"></script>
-<script>
-	function setServerOnline(online) {
-		document.getElementById("server-icon").href = "data:image/svg+xml," + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="7" fill="' + (online ? "#22c55e" : "#ef4444") + '"/></svg>');
-		const dot = document.querySelector(".server-dot");
-		dot?.classList.toggle("off", !online);
-		if (dot) dot.title = dot.ariaLabel = online ? "Diff server connected" : "Diff server disconnected";
-	}
-	const events = new EventSource("/events");
-	events.onopen = () => setServerOnline(true);
-	events.onmessage = () => refresh();
-	events.onerror = () => setServerOnline(false);
-
-	(() => {
-		const toggle = document.querySelector(".menu-toggle");
-		const scrim = document.querySelector(".scrim");
-		const close = () => document.body.classList.remove("menu-open");
-		toggle?.addEventListener("click", () => document.body.classList.toggle("menu-open"));
-		scrim?.addEventListener("click", close);
-		document.querySelector(".sidebar")?.addEventListener("click", (event) => {
-			if (event.target.closest("a, .file")) close();
-		});
-		addEventListener("keydown", (event) => { if (event.key === "Escape") close(); });
-	})();
-
-	let diff = ${scriptJson(diff)};
-	let files = ${scriptJson(files)};
-	let signatures = ${scriptJson(signatures)};
-	const reviewMode = ${scriptJson(reviewMode)};
-	const emptyMessage = ${scriptJson(reviewMode ? "Review queue is clear. Waiting for new agent changes…" : "No diff.")};
-	const defaultHint = "Select code or drag line numbers to comment";
-	const reviewStorageKey = "pi-diff-review:" + location.pathname;
-	let comments = [];
-	let editorState = null;
-	let pendingRefresh = false;
-	let refreshing = false;
-	let viewed = ${scriptJson(viewed)};
-	viewed = Object.fromEntries(files.filter((path) => viewed[path] === signatures[path]).map((path) => [path, viewed[path]]));
-	function isViewed(path) {
-		return viewed[path] === signatures[path];
-	}
-	function saveViewed(path, signature, checked) {
-		checked ? viewed[path] = signature : delete viewed[path];
-		const body = JSON.stringify({ currentPath: location.pathname, path, signature, checked });
-		fetch("/viewed", { method: "POST", headers: { "content-type": "application/json" }, body, keepalive: true }).catch(() => {});
-	}
-	function setDiffViewed(wrapper, checked) {
-		wrapper.querySelector(".d2h-file-collapse")?.classList.toggle("d2h-selected", checked);
-		wrapper.querySelector(".d2h-file-diff, .d2h-files-diff")?.classList.toggle("d2h-d-none", checked);
-	}
-	function syncDiffViewed() {
-		document.querySelectorAll(".d2h-file-wrapper").forEach((wrapper) => setDiffViewed(wrapper, isViewed(wrapper.dataset.path)));
-	}
-	document.addEventListener("change", (event) => {
-		const checkbox = event.target.closest?.(".d2h-file-collapse-input");
-		if (!checkbox) return;
-		saveViewed(checkbox.dataset.path, checkbox.dataset.signature, checkbox.checked);
-		setTimeout(syncDiffViewed, 0);
-	});
-	let outputFormat = matchMedia("(max-width: 900px)").matches ? "line-by-line" : "side-by-side";
-	const container = document.getElementById("diff");
-	const modeButtons = document.querySelectorAll(".view-mode");
-
-	function updateModeButtons() {
-		modeButtons.forEach((button) => button.classList.toggle("is-active", button.dataset.mode === outputFormat));
-	}
-
-	function setActive(index) {
-		document.querySelectorAll(".file").forEach((item) => item.classList.toggle("active", item.dataset.index === String(index)));
-	}
-
-	const headerH = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--header-h")) || 42;
-	const observer = new IntersectionObserver((entries) => {
-		const visible = entries.filter((entry) => entry.isIntersecting).sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top)[0];
-		if (visible) setActive(visible.target.id.replace("file-", ""));
-	}, { rootMargin: "-" + headerH + "px 0px -60% 0px" });
-
-	function assignFileAnchors() {
-		observer.disconnect();
-		document.querySelectorAll(".d2h-file-wrapper").forEach((wrapper, index) => {
-			const path = files[index];
-			wrapper.id = "file-" + index;
-			wrapper.dataset.path = path;
-			const checkbox = wrapper.querySelector(".d2h-file-collapse-input");
-			if (checkbox) {
-				checkbox.dataset.path = path;
-				checkbox.dataset.signature = signatures[path] || "";
-				checkbox.checked = isViewed(path);
-			}
-			setDiffViewed(wrapper, isViewed(path));
-			observer.observe(wrapper);
-		});
-	}
-
-	function wireFileListCollapse() {
-		const fileList = document.querySelector(".d2h-file-list-wrapper");
-		if (!fileList) return;
-		new ResizeObserver(([entry]) => document.documentElement.style.setProperty("--file-list-h", (entry.borderBoxSize?.[0]?.blockSize || fileList.offsetHeight) + "px")).observe(fileList);
-		fileList.addEventListener("click", (event) => {
-			if (event.target.closest(".d2h-file-list, .d2h-file-switch")) return;
-			const show = fileList.querySelector(".d2h-show");
-			fileList.querySelector(show?.style.display === "none" ? ".d2h-hide" : ".d2h-show")?.click();
-		});
-	}
-
-	const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
-	const wrapperFor = (path) => Array.from(document.querySelectorAll(".d2h-file-wrapper")).find((wrapper) => wrapper.dataset.path === path);
-	const reviewRows = (wrapper, side) => Array.from(wrapper.querySelectorAll("tr.review-line")).filter((row) => row.dataset.reviewSide === side);
-	const sideRangeLabel = (side, line, endLine) => (side === "old" ? "Old" : "New") + (endLine === line ? " line " + line : " lines " + line + "–" + endLine);
-	const rangeLabel = (item) => (item.oldLine
-		? sideRangeLabel("old", item.oldLine, item.oldEndLine) + " · " + sideRangeLabel("new", item.line, item.endLine)
-		: sideRangeLabel(item.side, item.line, item.endLine));
-
-	function persistDrafts() {
-		if (!reviewMode) return;
-		try { sessionStorage.setItem(reviewStorageKey, JSON.stringify({ comments, draft: editorState })); } catch {}
-	}
-
-	function restoreDrafts() {
-		if (!reviewMode) return;
-		try {
-			const saved = JSON.parse(sessionStorage.getItem(reviewStorageKey) || "null");
-			if (Array.isArray(saved?.comments)) comments = saved.comments.filter((comment) => comment && typeof comment.path === "string" && typeof comment.body === "string" && comment.body.trim());
-			if (saved?.draft && typeof saved.draft.path === "string") editorState = { ...saved.draft, restored: true };
-		} catch {}
-	}
-
-	function insertReviewRow(anchorRow, row) {
-		anchorRow.after(row);
-		const pane = anchorRow.closest(".d2h-file-side-diff");
-		const panes = pane ? Array.from(pane.closest(".d2h-files-diff").querySelectorAll(":scope > .d2h-file-side-diff")) : [];
-		const twinBody = panes.length === 2 ? panes[pane === panes[0] ? 1 : 0].querySelector("tbody") : null;
-		const twin = twinBody?.children[Array.prototype.indexOf.call(anchorRow.parentElement.children, anchorRow)];
-		if (!twin) return;
-		const spacer = document.createElement("tr");
-		spacer.className = "review-spacer-row";
-		const pad = document.createElement("td");
-		pad.colSpan = 2;
-		spacer.appendChild(pad);
-		twin.after(spacer);
-		const sync = () => { pad.style.height = row.getBoundingClientRect().height + "px"; };
-		new ResizeObserver(sync).observe(row.firstElementChild);
-		sync();
-	}
-
-	function buildCommentRow(comment) {
-		const row = document.createElement("tr");
-		row.className = "review-comment-row";
-		const cell = document.createElement("td");
-		cell.colSpan = 2;
-		row.appendChild(cell);
-		const box = document.createElement("div");
-		box.className = "review-comment";
-		const main = document.createElement("div");
-		main.className = "review-comment-main";
-		const meta = document.createElement("div");
-		meta.className = "review-comment-meta";
-		const label = document.createElement("span");
-		label.textContent = rangeLabel(comment);
-		meta.appendChild(label);
-		if (signatures[comment.path] !== comment.signature) {
-			const stale = document.createElement("span");
-			stale.className = "review-stale";
-			stale.textContent = "file changed since this comment";
-			meta.appendChild(stale);
-		}
-		const body = document.createElement("div");
-		body.className = "review-comment-body";
-		body.textContent = comment.body;
-		main.append(meta, body);
-		const actions = document.createElement("div");
-		actions.className = "review-comment-actions";
-		const edit = document.createElement("button");
-		edit.type = "button";
-		edit.textContent = "Edit";
-		edit.onclick = () => {
-			editorState = { editingId: comment.id, path: comment.path, signature: comment.signature, side: comment.side, line: comment.line, endLine: comment.endLine, oldLine: comment.oldLine, oldEndLine: comment.oldEndLine, excerpt: comment.excerpt, body: comment.body };
-			renderComments({ focusEditor: true });
-		};
-		const remove = document.createElement("button");
-		remove.type = "button";
-		remove.textContent = "Remove";
-		remove.onclick = () => {
-			comments = comments.filter((item) => item !== comment);
-			renderComments();
-		};
-		actions.append(edit, remove);
-		box.append(main, actions);
-		cell.appendChild(box);
-		return row;
-	}
-
-	function buildEditorRow(state) {
-		const row = document.createElement("tr");
-		row.className = "review-comment-row review-editor-row";
-		const cell = document.createElement("td");
-		cell.colSpan = 2;
-		row.appendChild(cell);
-		cell.innerHTML = '<div class="review-editor"><span class="review-editor-label"></span><textarea placeholder="Leave a comment for the agent…"></textarea><div class="review-editor-actions"><button class="review-cancel" type="button" title="Esc">Cancel</button><button class="review-add" type="button"></button></div></div>';
-		cell.querySelector(".review-editor-label").textContent = rangeLabel(state);
-		const textarea = cell.querySelector("textarea");
-		textarea.value = state.body || "";
-		const add = cell.querySelector(".review-add");
-		add.textContent = state.editingId ? "Save" : "Add comment";
-		add.title = navigator.platform.includes("Mac") ? "⌘⏎" : "Ctrl+Enter";
-		const closeEditor = () => {
-			editorState = null;
-			renderComments();
-			if (pendingRefresh) { pendingRefresh = false; refresh(); }
-		};
-		const commit = () => {
-			const body = textarea.value.trim();
-			if (!body) return textarea.focus();
-			if (state.editingId) {
-				const existing = comments.find((item) => item.id === state.editingId);
-				if (existing) existing.body = body;
-			} else {
-				comments.push({ id: uid(), path: state.path, signature: state.signature, side: state.side, line: state.line, endLine: state.endLine, oldLine: state.oldLine, oldEndLine: state.oldEndLine, excerpt: state.excerpt, body });
-			}
-			closeEditor();
-		};
-		textarea.addEventListener("input", () => { state.body = textarea.value; persistDrafts(); });
-		textarea.addEventListener("keydown", (event) => {
-			if ((event.metaKey || event.ctrlKey) && event.key === "Enter") { event.preventDefault(); commit(); }
-			else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeEditor(); }
-		});
-		textarea.addEventListener("blur", () => {
-			if (pendingRefresh && !textarea.value.trim()) { pendingRefresh = false; refresh(); }
-		});
-		cell.querySelector(".review-cancel").onclick = closeEditor;
-		add.onclick = commit;
-		return row;
-	}
-
-	function markOldRange(wrapper, item, className) {
-		if (!item.oldLine) return;
-		reviewRows(wrapper, "old")
-			.filter((row) => Number(row.dataset.reviewLine) >= item.oldLine && Number(row.dataset.reviewLine) <= item.oldEndLine)
-			.forEach((row) => row.classList.add(className));
-	}
-
-	function attachCommentRow(comment) {
-		const wrapper = wrapperFor(comment.path);
-		if (!wrapper) return false;
-		const rows = reviewRows(wrapper, comment.side);
-		if (!rows.length) return false;
-		const selected = rows.filter((row) => Number(row.dataset.reviewLine) >= comment.line && Number(row.dataset.reviewLine) <= comment.endLine);
-		selected.forEach((row) => row.classList.add("review-commented"));
-		markOldRange(wrapper, comment, "review-commented");
-		const anchor = selected[selected.length - 1] || rows.filter((row) => Number(row.dataset.reviewLine) < comment.line).pop() || rows[0];
-		insertReviewRow(anchor, buildCommentRow(comment));
-		return true;
-	}
-
-	function attachEditorRow(state, focusEditor) {
-		const wrapper = wrapperFor(state.path);
-		const rows = wrapper ? reviewRows(wrapper, state.side) : [];
-		if (!rows.length) return false;
-		const selected = rows.filter((row) => Number(row.dataset.reviewLine) >= state.line && Number(row.dataset.reviewLine) <= state.endLine);
-		selected.forEach((row) => row.classList.add("review-selected"));
-		markOldRange(wrapper, state, "review-selected");
-		const anchor = selected[selected.length - 1] || rows.filter((row) => Number(row.dataset.reviewLine) < state.line).pop() || rows[0];
-		const row = buildEditorRow(state);
-		insertReviewRow(anchor, row);
-		const textarea = row.querySelector("textarea");
-		if (state.restored) {
-			delete state.restored;
-			row.scrollIntoView({ block: "center" });
-			focusEditor = true;
-		}
-		if (focusEditor) {
-			textarea.focus();
-			textarea.setSelectionRange(textarea.value.length, textarea.value.length);
-		}
-		return true;
-	}
-
-	function renderOrphans(orphans) {
-		if (!orphans.length) return;
-		const box = document.createElement("div");
-		box.className = "review-orphans";
-		const title = document.createElement("div");
-		title.className = "review-orphans-title";
-		title.textContent = "Comments on lines no longer in the diff — still included in the review:";
-		box.appendChild(title);
-		for (const comment of orphans) {
-			const item = document.createElement("div");
-			item.className = "review-orphan";
-			const text = document.createElement("span");
-			text.textContent = comment.path + " · " + rangeLabel(comment) + " — " + comment.body;
-			const remove = document.createElement("button");
-			remove.type = "button";
-			remove.textContent = "Remove";
-			remove.onclick = () => {
-				comments = comments.filter((entry) => entry !== comment);
-				renderComments();
-			};
-			item.append(text, remove);
-			box.appendChild(item);
-		}
-		container.prepend(box);
-	}
-
-	function renderComments(options = {}) {
-		if (!reviewMode) return;
-		document.querySelectorAll(".review-comment-row, .review-spacer-row, .review-orphans").forEach((node) => node.remove());
-		document.querySelectorAll(".review-commented, .review-selected").forEach((row) => row.classList.remove("review-commented", "review-selected"));
-		const orphans = [];
-		for (const comment of comments) {
-			if (editorState && editorState.editingId === comment.id) continue;
-			if (!attachCommentRow(comment)) orphans.push(comment);
-		}
-		if (editorState && !attachEditorRow(editorState, options.focusEditor)) {
-			const state = editorState;
-			editorState = null;
-			if (!state.editingId && state.body && state.body.trim()) {
-				comments.push({ id: uid(), path: state.path, signature: state.signature, side: state.side, line: state.line, endLine: state.endLine, excerpt: state.excerpt, body: state.body.trim() });
-			}
-			return renderComments(options);
-		}
-		renderOrphans(orphans);
-		updateReviewBar();
-		persistDrafts();
-	}
-
-	function wireReviewLines() {
-		document.querySelectorAll(".d2h-file-wrapper").forEach((wrapper) => {
-			const rows = [];
-			wrapper.querySelectorAll("tr").forEach((row) => {
-				const numberCell = row.querySelector(".d2h-code-linenumber, .d2h-code-side-linenumber");
-				if (!numberCell || numberCell.classList.contains("d2h-info") || numberCell.classList.contains("d2h-emptyplaceholder")) return;
-				let side; let line;
-				if (numberCell.classList.contains("d2h-code-side-linenumber")) {
-					const panes = Array.from(wrapper.querySelectorAll(":scope > .d2h-files-diff > .d2h-file-side-diff"));
-					side = panes.indexOf(numberCell.closest(".d2h-file-side-diff")) === 0 ? "old" : "new";
-					line = Number(numberCell.textContent.trim());
-				} else {
-					const oldLine = numberCell.querySelector(".line-num1")?.textContent.trim();
-					const newLine = numberCell.querySelector(".line-num2")?.textContent.trim();
-					side = newLine ? "new" : "old";
-					line = Number(newLine || oldLine);
-				}
-				if (!line) return;
-				row.dataset.reviewSide = side;
-				row.dataset.reviewLine = String(line);
-				row.classList.add("review-line");
-				numberCell.title = "Comment on this line — drag for a range";
-				rows.push(row);
-			});
-
-			let selection = null;
-			const sameSideRows = (startRow) => rows.filter((row) => row.dataset.reviewSide === startRow.dataset.reviewSide);
-			const paintSelection = (startRow, endRow) => {
-				const candidates = sameSideRows(startRow);
-				const start = candidates.indexOf(startRow);
-				const end = candidates.indexOf(endRow);
-				if (end < 0) return;
-				const low = Math.min(start, end);
-				const high = Math.max(start, end);
-				rows.forEach((row) => row.classList.toggle("review-selected", candidates.indexOf(row) >= low && candidates.indexOf(row) <= high));
-				selection.endRow = endRow;
-			};
-			const clearSelection = () => {
-				selection = null;
-				document.body.classList.remove("review-selecting");
-				rows.forEach((row) => row.classList.remove("review-selected"));
-			};
-			wrapper.addEventListener("pointerdown", (event) => {
-				const numberCell = event.target.closest(".d2h-code-linenumber, .d2h-code-side-linenumber");
-				const row = numberCell?.closest("tr.review-line");
-				if (!row) return;
-				event.preventDefault();
-				const openTextarea = document.querySelector(".review-editor textarea");
-				if (openTextarea) return openTextarea.focus();
-				selection = { startRow: row, endRow: row };
-				document.body.classList.add("review-selecting");
-				paintSelection(row, row);
-				numberCell.setPointerCapture?.(event.pointerId);
-			});
-			wrapper.addEventListener("pointermove", (event) => {
-				if (!selection) return;
-				const target = document.elementFromPoint(event.clientX, event.clientY)?.closest("tr.review-line");
-				if (target && target.closest(".d2h-file-wrapper") === wrapper) paintSelection(selection.startRow, target);
-			});
-			wrapper.addEventListener("pointerup", () => {
-				if (!selection) return;
-				const { startRow, endRow } = selection;
-				clearSelection();
-				openEditorFromRows(wrapper, startRow, endRow);
-			});
-			wrapper.addEventListener("pointercancel", clearSelection);
-		});
-	}
-
-	function openEditorAt(path, side, line, endLine, excerpt, oldRange) {
-		const openTextarea = document.querySelector(".review-editor textarea");
-		if (openTextarea) return openTextarea.focus();
-		editorState = { path, signature: signatures[path] || "", side, line, endLine, oldLine: oldRange?.line, oldEndLine: oldRange?.endLine, excerpt, body: "" };
-		renderComments({ focusEditor: true });
-	}
-
-	function openEditorFromRows(wrapper, startRow, endRow) {
-		const rows = reviewRows(wrapper, startRow.dataset.reviewSide);
-		const startIndex = rows.indexOf(startRow);
-		const endIndex = rows.indexOf(endRow);
-		if (startIndex < 0 || endIndex < 0) return;
-		const selected = rows.slice(Math.min(startIndex, endIndex), Math.max(startIndex, endIndex) + 1);
-		const first = selected[0];
-		const last = selected[selected.length - 1];
-		const excerpt = normalizeExcerpt(first.querySelector(".d2h-code-line-ctn")?.textContent || "");
-		openEditorAt(wrapper.dataset.path, first.dataset.reviewSide, Number(first.dataset.reviewLine), Number(last.dataset.reviewLine), excerpt);
-	}
-
-	function normalizeExcerpt(text) {
-		return text.replace(/(^|\\n)[+\\-]/g, "$1").replace(/\\s+/g, " ").trim().slice(0, 160);
-	}
-
-	const selectionButton = (() => {
-		if (!reviewMode) return null;
-		const button = document.createElement("button");
-		button.type = "button";
-		button.className = "review-selection-btn";
-		button.hidden = true;
-		document.body.appendChild(button);
-		return button;
-	})();
-	let pendingSelection = null;
-	let selectionMouseDown = false;
-
-	function closestReviewRow(node) {
-		const el = node && (node.nodeType === 1 ? node : node.parentElement);
-		return el ? el.closest("tr.review-line") : null;
-	}
-
-	function hideSelectionButton() {
-		pendingSelection = null;
-		if (selectionButton) selectionButton.hidden = true;
-	}
-
-	function evaluateSelection() {
-		if (!selectionButton) return;
-		const sel = getSelection();
-		if (!sel || sel.isCollapsed || !sel.rangeCount) return hideSelectionButton();
-		const range = sel.getRangeAt(0);
-		const startRow = closestReviewRow(range.startContainer);
-		const endRow = closestReviewRow(range.endContainer);
-		if (!startRow || !endRow) return hideSelectionButton();
-		const wrapper = startRow.closest(".d2h-file-wrapper");
-		if (endRow.closest(".d2h-file-wrapper") !== wrapper) return hideSelectionButton();
-		if (startRow.closest(".d2h-file-side-diff") !== endRow.closest(".d2h-file-side-diff")) return hideSelectionButton();
-		const rows = Array.from(wrapper.querySelectorAll("tr.review-line")).filter((row) => range.intersectsNode(row));
-		const linesOf = (which) => rows.filter((row) => row.dataset.reviewSide === which).map((row) => Number(row.dataset.reviewLine));
-		const newLines = linesOf("new");
-		const oldLines = linesOf("old");
-		const side = newLines.length ? "new" : "old";
-		const lines = side === "new" ? newLines : oldLines;
-		if (!lines.length) return hideSelectionButton();
-		const line = Math.min(...lines);
-		const endLine = Math.max(...lines);
-		const oldRange = side === "new" && oldLines.length ? { line: Math.min(...oldLines), endLine: Math.max(...oldLines) } : null;
-		pendingSelection = { path: wrapper.dataset.path, side, line, endLine, oldRange, excerpt: normalizeExcerpt(sel.toString()) };
-		const bare = (from, to) => (to === from ? String(from) : from + "–" + to);
-		selectionButton.textContent = oldRange
-			? "Comment old " + bare(oldRange.line, oldRange.endLine) + " + new " + bare(line, endLine)
-			: "Comment " + (side === "old" ? "old " : "") + (endLine === line ? "line " + line : "lines " + line + "–" + endLine);
-		const rects = range.getClientRects();
-		const rect = rects.length ? rects[rects.length - 1] : range.getBoundingClientRect();
-		selectionButton.hidden = false;
-		const left = Math.min(rect.right + 6 + scrollX, scrollX + innerWidth - selectionButton.offsetWidth - 12);
-		selectionButton.style.left = Math.max(scrollX + 4, left) + "px";
-		selectionButton.style.top = (rect.bottom + 6 + scrollY) + "px";
-	}
-
-	if (selectionButton) {
-		selectionButton.addEventListener("pointerdown", (event) => {
-			event.preventDefault();
-			const info = pendingSelection;
-			hideSelectionButton();
-			getSelection()?.removeAllRanges();
-			if (info) openEditorAt(info.path, info.side, info.line, info.endLine, info.excerpt, info.oldRange);
-		});
-		document.addEventListener("pointerdown", (event) => {
-			if (event.target !== selectionButton) selectionMouseDown = true;
-		}, true);
-		document.addEventListener("pointerup", () => {
-			selectionMouseDown = false;
-			setTimeout(evaluateSelection, 0);
-		}, true);
-		document.addEventListener("selectionchange", () => {
-			const sel = getSelection();
-			if (!sel || sel.isCollapsed) return hideSelectionButton();
-			if (!selectionMouseDown) evaluateSelection();
-		});
-	}
-
-	function updateReviewBar() {
-		const bar = document.querySelector(".review-bar");
-		if (!bar) return;
-		bar.hidden = !diff.trim() && !comments.length;
-		const count = comments.length;
-		bar.querySelector(".review-hint").hidden = count > 0 || !!editorState;
-		const summary = bar.querySelector(".review-summary");
-		summary.hidden = !count;
-		summary.textContent = count + (count === 1 ? " comment" : " comments");
-		bar.querySelector(".review-submit").hidden = !count;
-	}
-
-	document.querySelector(".review-submit")?.addEventListener("click", async (event) => {
-		const button = event.currentTarget;
-		button.disabled = true;
-		button.textContent = "Submitting…";
-		const bar = document.querySelector(".review-bar");
-		const errorNote = bar.querySelector(".review-error");
-		errorNote.hidden = true;
-		try {
-			const response = await fetch("/review/submit", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ comments }) });
-			if (!response.ok) throw new Error(await response.text() || "Submit failed");
-			comments = [];
-			editorState = null;
-			const hint = bar.querySelector(".review-hint");
-			hint.textContent = "Review sent to the agent ✓";
-			setTimeout(() => { hint.textContent = defaultHint; }, 4000);
-			renderComments();
-			refresh();
-		} catch (error) {
-			errorNote.textContent = error.message;
-			errorNote.hidden = false;
-			setTimeout(() => { errorNote.hidden = true; }, 6000);
-		} finally {
-			button.disabled = false;
-			button.textContent = "Submit review";
-		}
-	});
-
-	function scrollAnchor() {
-		for (const wrapper of document.querySelectorAll(".d2h-file-wrapper")) {
-			const rect = wrapper.getBoundingClientRect();
-			if (rect.bottom > headerH + 10) return { path: wrapper.dataset.path, top: rect.top };
-		}
-		return null;
-	}
-
-	function restoreScroll(anchor) {
-		const target = anchor && wrapperFor(anchor.path);
-		if (target) scrollBy(0, target.getBoundingClientRect().top - anchor.top);
-	}
-
-	function renderSidebar(commitList) {
-		const filesSection = document.querySelector(".files");
-		if (filesSection) {
-			filesSection.textContent = "";
-			const label = document.createElement("div");
-			label.className = "section-label";
-			label.textContent = "Files" + (files.length ? " · " + files.length : "");
-			filesSection.appendChild(label);
-			if (!files.length) {
-				const empty = document.createElement("div");
-				empty.className = "files__empty";
-				empty.textContent = "No files";
-				filesSection.appendChild(empty);
-			}
-			files.forEach((path, index) => {
-				const button = document.createElement("button");
-				button.className = "file";
-				button.type = "button";
-				button.dataset.index = String(index);
-				button.title = path;
-				const span = document.createElement("span");
-				span.className = "file-path";
-				span.textContent = "⁨" + path + "⁩";
-				button.appendChild(span);
-				filesSection.appendChild(button);
-			});
-		}
-		const reviewTab = document.querySelector('.tabs a[href="/review"]');
-		if (reviewTab && reviewMode) reviewTab.textContent = files.length ? "Review · " + files.length : "Review";
-		const commitsSection = document.querySelector(".commits");
-		if (commitsSection && commitList.length) {
-			commitsSection.textContent = "";
-			const label = document.createElement("div");
-			label.className = "section-label";
-			label.textContent = "Commits";
-			commitsSection.appendChild(label);
-			for (const commit of commitList) {
-				const link = document.createElement("a");
-				const path = "/commit/" + commit.sha;
-				link.className = location.pathname === path ? "commit active" : "commit";
-				link.href = path;
-				const sha = document.createElement("b");
-				sha.textContent = commit.shortSha;
-				const when = document.createElement("span");
-				when.textContent = commit.when;
-				link.append(sha, " " + commit.subject, when);
-				commitsSection.appendChild(link);
-			}
-		}
-	}
-
-	async function refresh() {
-		const activeEditor = document.querySelector(".review-editor textarea");
-		if (refreshing || (activeEditor && (activeEditor === document.activeElement || activeEditor.value.trim()))) {
-			pendingRefresh = true;
-			return;
-		}
-		refreshing = true;
-		try {
-			const response = await fetch(location.pathname, { headers: { accept: "application/json" } });
-			if (!response.ok) throw new Error("Refresh failed");
-			const data = await response.json();
-			diff = data.diff;
-			files = data.files;
-			signatures = data.signatures;
-			viewed = Object.fromEntries(files.filter((path) => data.viewed?.[path] === signatures[path]).map((path) => [path, data.viewed[path]]));
-			renderSidebar(data.commits || []);
-			const anchor = scrollAnchor();
-			draw();
-			restoreScroll(anchor);
-		} catch {
-			location.reload();
-			return;
-		} finally {
-			refreshing = false;
-		}
-		if (pendingRefresh) {
-			pendingRefresh = false;
-			refresh();
-		}
-	}
-
-	function draw() {
-		hideSelectionButton();
-		container.textContent = "";
-		if (!diff.trim()) {
-			const empty = document.createElement("p");
-			empty.className = "empty";
-			empty.textContent = emptyMessage;
-			container.appendChild(empty);
-			if (reviewMode) renderComments();
-			return;
-		}
-		new Diff2HtmlUI(container, diff, {
-			colorScheme: "dark",
-			diffMaxChanges: 3000,
-			diffMaxLineLength: 2000,
-			diffTooBigMessage: () => "Diff too large to render. Narrow the path or commit range.",
-			highlight: false,
-			matching: "none",
-			outputFormat,
-		}).draw();
-		assignFileAnchors();
-		wireFileListCollapse();
-		if (reviewMode) {
-			wireReviewLines();
-			renderComments();
-		}
-		updateModeButtons();
-	}
-
-	modeButtons.forEach((button) => button.addEventListener("click", () => {
-		outputFormat = button.dataset.mode;
-		draw();
-	}));
-
-	document.querySelector(".files")?.addEventListener("click", (event) => {
-		const item = event.target.closest(".file");
-		if (!item) return;
-		document.getElementById("file-" + item.dataset.index)?.scrollIntoView({ behavior: "smooth", block: "start" });
-		setActive(item.dataset.index);
-	});
-
-	restoreDrafts();
-	draw();
-</script>
+<script id="pi-diff-state" type="application/json">${scriptJson({ diff, files, signatures, reviewMode, viewed, emptyMessage: reviewMode ? "Review queue is clear. Waiting for new agent changes…" : "No diff." })}</script>
+<script src="/review-workspace.js"></script>
 </body>
 </html>`;
 }
@@ -1362,6 +1370,11 @@ module.exports = function piDiff(pi) {
 			if (pathname === "/diff2html-ui.js") {
 				res.writeHead(200, { "content-type": "application/javascript; charset=utf-8" });
 				res.end(diffUiJs);
+				return;
+			}
+			if (pathname === "/review-workspace.js") {
+				res.writeHead(200, { "content-type": "application/javascript; charset=utf-8" });
+				res.end(reviewWorkspaceSource());
 				return;
 			}
 			if (pathname === "/events") {
