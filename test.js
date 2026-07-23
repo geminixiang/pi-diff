@@ -26,6 +26,16 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	assert.match(pending, /a\/new\.js/);
 	assert.equal(lib.formatReviewFeedback([{ path: "new.js", side: "new", line: 1, endLine: 1, body: "Add a test." }]), "Please address the following review comments:\n\nnew.js\n- New line 1: Add a test.");
 	assert.match(lib.formatReviewFeedback([{ path: "new.js", side: "new", line: 2, endLine: 5, body: "Extract this." }]), /New lines 2-5: Extract this\./);
+	assert.equal(
+		lib.formatReviewFeedback([{ path: "new.js", side: "new", line: 2, endLine: 2, body: "Tighten.", excerpt: "const x = 1", stale: true }]),
+		"Please address the following review comments:\n\nnew.js\n- New line 2 (`const x = 1`): Tighten. [written against an earlier version of the file; line numbers may be off]",
+	);
+	assert.match(lib.formatReviewFeedback([{ path: "new.js", side: "new", line: 1, endLine: 1, body: "First\nSecond" }]), /- New line 1: First\n  Second/);
+	assert.equal(
+		lib.formatReviewFeedback([{ path: "new.js", side: "new", line: 10, endLine: 15, oldLine: 3, oldEndLine: 5, body: "Rework this block.", excerpt: "const y = 2" }]),
+		"Please address the following review comments:\n\nnew.js\n- Old lines 3-5 → New lines 10-15 (`const y = 2`): Rework this block.",
+	);
+	assert.match(lib.formatReviewFeedback([{ path: "new.js", side: "new", line: 7, endLine: 7, oldLine: 4, oldEndLine: 4, body: "Check." }]), /- Old line 4 → New line 7: Check\./);
 
 	const html = lib.page({ cwd: ".", currentPath: "/", title: "t", command: "git diff", diff: "</script>", files: ["a.js", "b.js"], signatures: { "a.js": "123" }, viewed: { "a.js": "123" }, commits: [], repo: { url: "https://github.com/owner/repo", branch: "feature/x" } });
 	assert.match(html, /diff2html-ui\.js/);
@@ -37,7 +47,19 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 	assert.doesNotMatch(reviewHtml, />vs HEAD</);
 	assert.match(reviewHtml, /d2h-code-linenumber, \.d2h-code-side-linenumber/);
 	assert.match(reviewHtml, /d2h-file-side-diff/);
-	assert.match(reviewHtml, /selection = null;\s*document\.body\.classList\.remove\("review-selecting"\);\s*openEditor/);
+	assert.match(reviewHtml, /clearSelection\(\);\s*openEditorFromRows\(wrapper, startRow, endRow\)/);
+	assert.match(reviewHtml, /Select code or drag line numbers to comment/);
+	assert.match(reviewHtml, /review-selection-btn/);
+	assert.match(reviewHtml, /addEventListener\("selectionchange"/);
+	assert.match(reviewHtml, /"Comment old " \+ bare\(oldRange\.line, oldRange\.endLine\) \+ " \+ new "/);
+	assert.match(reviewHtml, /markOldRange\(wrapper, comment, "review-commented"\)/);
+	assert.match(reviewHtml, /markOldRange\(wrapper, state, "review-selected"\)/);
+	const inlineScript = reviewHtml.split('<script src="/diff2html-ui.js"></script>')[1].match(/<script>([\s\S]*?)<\/script>/)[1];
+	assert.doesNotThrow(() => new Function(inlineScript), "inline page script must parse (template-literal escapes)");
+	assert.match(reviewHtml, /event\.metaKey \|\| event\.ctrlKey/);
+	assert.match(reviewHtml, /accept: "application\/json"/);
+	assert.match(reviewHtml, /sessionStorage\.setItem\(reviewStorageKey/);
+	assert.match(reviewHtml, /review-spacer-row/);
 	assert.match(html, /tree\/feature%2Fx/);
 	assert.match(html, /<title>pi-diff · feature\/x<\/title>/);
 	assert.match(html, /<span class="meta">\. · feature\/x · git diff<\/span>/);

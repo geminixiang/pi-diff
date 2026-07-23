@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Select code text with the mouse (or keyboard) to comment: a floating "Comment lines X–Y" button appears at the end of the selection and opens the comment editor for that range, with the selected text sent to the agent as the excerpt. Native selection auto-scrolls at viewport edges, so long ranges are much easier to grab than with line-number dragging.
+- Track deleted and added lines separately when a selection spans both: the button reads "Comment old A–B + new X–Y", both ranges stay highlighted (in both unified and split views), and the feedback sent to the agent is labeled "Old lines A-B → New lines X-Y". Selections of deleted lines only are labeled "old" explicitly.
+
+### Changed
+
+- Refresh the diff in place (no full page reload) when files change: pending review comments, open comment drafts, and the scroll position all survive agent edits, view-mode switches, and manual reloads.
+- Defer diff refreshes while a comment is being written, applying them as soon as the draft is added or cancelled.
+- Keep pending comments and drafts in `sessionStorage` so a page reload restores them.
+- Flag comments whose file changed after they were written as stale and annotate them on submit instead of rejecting the whole review with a 409.
+- Include a short excerpt of the first commented line in the feedback sent to the agent.
+- Show the review hint bar from the start, add a GitHub-style `+` marker on line-number hover, and keep split-view panes aligned around comment rows.
+- Add comment editing, `⌘⏎`/`Ctrl+Enter` to add, and `Esc` to cancel; show submit errors inline instead of an `alert()`.
+- Remove the 20-line cap on drag selections.
+
+### Tests
+
+- Cover stale/excerpt feedback formatting, multi-line comment bodies, and the refresh/persistence page controls.
+
 ## [0.3.0] - 2026-07-23
 
 ### Added

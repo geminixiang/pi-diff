@@ -39,7 +39,9 @@ For an iterative agent review workflow, use:
 /diff
 ```
 
-Review mode sorts changed files by modification time. Drag across old or new line numbers to highlight a range and add a GitHub-style multi-line review comment. Choose **Submit review** to send all comments to the current Pi agent. Submitted file versions leave the review queue; if the agent changes them again, they reappear automatically.
+Review mode sorts changed files by modification time. Select code text (a floating **Comment lines X–Y** button appears), or click/drag line numbers, to add a GitHub-style review comment — `⌘⏎`/`Ctrl+Enter` adds it, `Esc` cancels, and saved comments can be edited or removed inline. A selection that spans deleted and added lines keeps both ranges: the comment is labeled **Old A–B · New X–Y**, both sides stay highlighted, and the agent receives both line ranges. Choose **Submit review** to send all comments to the current Pi agent; each comment includes a short code excerpt so the agent can locate it even after further edits. Submitted file versions leave the review queue; if the agent changes them again, they reappear automatically.
+
+While the agent keeps working, the page updates in place instead of reloading: pending comments and open comment drafts survive diff refreshes, view-mode switches, and full page reloads. If a file changes under a pending comment, the comment is flagged as stale and annotated on submit rather than rejected.
 
 The extension starts a local `127.0.0.1` server for the session and closes it on Pi shutdown/reload.
 
